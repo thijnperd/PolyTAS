@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PolyTAS Launcher</title>
+<style>
+  :root {
+    --bg: #0b0b14;
+    --card: #141428;
+    --accent: #ffd60a;
+    --text: #e6e6f5;
+    --dim: #8a8ab0;
+    --border: #242446;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: "Segoe UI", Arial, sans-serif; }
+  body { display: grid; place-items: center; padding: 24px; }
+  .card {
+    width: min(520px, 100%);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+  }
+  h1 { font-size: 22px; letter-spacing: 1px; margin-bottom: 8px; }
+  p { color: var(--dim); line-height: 1.6; margin-bottom: 16px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  button {
+    background: var(--accent);
+    border: none;
+    color: #0a0a12;
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  button.secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  #status { margin-top: 12px; color: var(--dim); font-size: 12px; min-height: 16px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>PolyTAS</h1>
+    <p>Open the editor in Picture-in-Picture so it stays above Polytrack while you play.</p>
+    <div class="row">
+      <button id="openPip">Open PiP Window</button>
+      <button class="secondary" id="openTab">Open in Tab</button>
+    </div>
+    <div id="status"></div>
+  </div>
+<script src="launcher.js"></script>
+</body>
+</html>

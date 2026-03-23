@@ -1,0 +1,691 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PolyTAS â€” Polytrack TAS Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Barlow+Condensed:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #07070d;
+  --bg2:       #0d0d18;
+  --surface:   #111120;
+  --surface2:  #171728;
+  --border:    #252540;
+  --border2:   #1d1d35;
+  --text:      #d8d8f0;
+  --dim:       #5a5a8a;
+  --accent:    #FFD60A;
+  --accent2:   #ff6b35;
+  --up:        #39ff85;
+  --down:      #ff3a5c;
+  --left:      #3a9eff;
+  --right:     #ff9c3a;
+  --rec:       #ff3a5c;
+  --radius:    4px;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  overflow: hidden;
+}
+
+/* â”€â”€â”€ LAYOUT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.app {
+  display: grid;
+  grid-template-rows: 44px 1fr;
+  height: 100vh;
+  transition: all 0.3s ease;
+}
+
+/* â”€â”€â”€ HEADER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-bottom: 2px solid var(--accent);
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+header::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; width: 100%; height: 100%;
+  background: repeating-linear-gradient(90deg, transparent, transparent 40px, rgba(255,214,10,0.015) 40px, rgba(255,214,10,0.015) 41px);
+  pointer-events: none;
+}
+
+.logo {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--accent);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.logo span { color: var(--text); }
+
+.header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* REC INDICATOR */
+.rec-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--dim);
+  padding: 3px 7px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  transition: all 0.2s;
+}
+.rec-indicator.recording {
+  color: var(--rec);
+  border-color: var(--rec);
+  background: rgba(255,58,92,0.08);
+  animation: recpulse 1s infinite;
+}
+@keyframes recpulse { 0%,100%{opacity:1} 50%{opacity:0.55} }
+.rec-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--dim);
+  transition: background 0.2s;
+}
+.rec-indicator.recording .rec-dot { background: var(--rec); }
+
+/* â”€â”€â”€ BODY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.body {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+body.pip-window .body { grid-template-columns: 1fr; }
+body.pip-window .right-panel { display: none; }
+
+/* â”€â”€â”€ LEFT PANEL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.left-panel {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  min-height: 0;
+}
+body.pip-window .left-panel { border-right: none; }
+
+/* â”€â”€â”€ TOOLBAR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.toolbar-sep { flex: 1; }
+
+.frame-counter {
+  font-size: 11px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.frame-counter em { color: var(--accent); font-style: normal; }
+
+/* â”€â”€â”€ SETTINGS BAR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.settings-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 10px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border2);
+  flex-shrink: 0;
+}
+.settings-bar label { display: flex; align-items: center; gap: 5px; color: var(--dim); font-size: 10px; }
+.settings-bar input[type=number] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 2px 5px;
+  width: 58px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  outline: none;
+}
+.settings-bar input[type=number]:focus { border-color: var(--accent); }
+.duration-display { margin-left: auto; color: var(--dim); font-size: 10px; }
+.duration-display strong { color: var(--text); }
+
+/* â”€â”€â”€ TIMELINE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.timeline-wrap {
+  padding: 8px 10px 5px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.timeline-label {
+  font-size: 10px; letter-spacing: 1px; color: var(--dim);
+  text-transform: uppercase; margin-bottom: 5px;
+  display: flex; align-items: center; gap: 8px;
+}
+.tl-hint { font-size: 10px; color: var(--border); margin-left: auto; }
+#timeline {
+  width: 100%; height: 76px;
+  display: block; border-radius: 2px;
+  cursor: crosshair; border: 1px solid var(--border2);
+}
+.tl-legend { display: flex; gap: 10px; margin-top: 5px; flex-wrap: wrap; }
+.tl-legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--dim); }
+.tl-legend-dot { width: 7px; height: 7px; border-radius: 1px; flex-shrink: 0; }
+
+/* â”€â”€â”€ TABS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.tab-bar {
+  display: flex;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.tab-btn {
+  padding: 6px 14px;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 12px; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--dim);
+  background: transparent; border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer; transition: color 0.1s, border-color 0.1s;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* â”€â”€â”€ SEGMENTS PANEL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.segments-panel {
+  flex: 1; overflow-y: auto; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 5px; min-height: 0;
+}
+.segments-panel::-webkit-scrollbar { width: 5px; }
+.segments-panel::-webkit-scrollbar-track { background: transparent; }
+.segments-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* â”€â”€â”€ FRAME GRID PANEL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.frame-grid-panel {
+  flex: 1; overflow: hidden;
+  display: none; flex-direction: column; min-height: 0;
+}
+.frame-grid-panel.active { display: flex; }
+
+.fg-controls {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; background: var(--bg2);
+  border-bottom: 1px solid var(--border2); flex-shrink: 0;
+}
+.fg-controls label { font-size: 10px; color: var(--dim); display: flex; align-items: center; gap: 5px; }
+.fg-controls input[type=number] {
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); border-radius: var(--radius);
+  padding: 2px 5px; width: 70px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; outline: none;
+}
+
+.fg-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; }
+.fg-scroll::-webkit-scrollbar { width: 5px; }
+.fg-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.fg-table { width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+.fg-table thead th {
+  position: sticky; top: 0; background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  padding: 5px 4px; text-align: center;
+  font-size: 10px; letter-spacing: 1px; z-index: 2;
+}
+.fg-table thead th:first-child { text-align: right; padding-right: 8px; color: var(--dim); }
+.fg-th-up    { color: var(--up) !important; }
+.fg-th-down  { color: var(--down) !important; }
+.fg-th-left  { color: var(--left) !important; }
+.fg-th-right { color: var(--right) !important; }
+
+.fg-table tbody tr { cursor: pointer; }
+.fg-table tbody tr:hover td { background: rgba(255,255,255,0.03); }
+.fg-table td {
+  padding: 2px 4px; border-bottom: 1px solid rgba(255,255,255,0.03);
+  text-align: center; transition: background 0.05s; user-select: none;
+}
+.fg-table td:first-child { text-align: right; padding-right: 8px; color: var(--dim); font-size: 10px; width: 60px; }
+
+.fg-cell {
+  display: inline-block; width: 22px; height: 16px;
+  border-radius: 2px; transition: background 0.05s;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.fg-cell.on-up    { background: var(--up);    border-color: var(--up);    opacity: 0.85; }
+.fg-cell.on-down  { background: var(--down);  border-color: var(--down);  opacity: 0.85; }
+.fg-cell.on-left  { background: var(--left);  border-color: var(--left);  opacity: 0.85; }
+.fg-cell.on-right { background: var(--right); border-color: var(--right); opacity: 0.85; }
+
+/* â”€â”€â”€ SEGMENT CARDS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.seg-card {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--border2);
+  border-radius: var(--radius); padding: 6px 8px; transition: border-color 0.1s;
+}
+.seg-card:hover { border-color: var(--border); }
+.seg-index { font-size: 10px; color: var(--dim); min-width: 16px; text-align: right; }
+.seg-range { font-size: 11px; color: var(--accent); min-width: 105px; }
+.seg-dur   { font-size: 10px; color: var(--dim); min-width: 40px; }
+.seg-keys  { display: flex; gap: 3px; flex: 1; flex-wrap: wrap; }
+
+.kbadge {
+  font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+  font-size: 11px; padding: 1px 6px; border-radius: 2px; line-height: 1.6;
+}
+.kbadge.up    { background: var(--up);    color: #07070d; }
+.kbadge.down  { background: var(--down);  color: #fff; }
+.kbadge.left  { background: var(--left);  color: #07070d; }
+.kbadge.right { background: var(--right); color: #07070d; }
+
+.seg-rec-badge {
+  font-size: 9px; padding: 1px 4px;
+  background: rgba(255,58,92,0.12); border: 1px solid rgba(255,58,92,0.3);
+  color: var(--rec); border-radius: 2px; letter-spacing: 0.5px; flex-shrink: 0;
+}
+
+.seg-actions { display: flex; gap: 3px; margin-left: auto; }
+
+.empty-state {
+  text-align: center; padding: 24px 16px;
+  color: var(--dim); font-size: 11px; line-height: 1.7;
+}
+
+/* â”€â”€â”€ FOOTER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.footer {
+  display: flex; gap: 5px; align-items: center;
+  padding: 6px 10px; background: var(--surface);
+  border-top: 1px solid var(--border); flex-shrink: 0;
+}
+
+/* â”€â”€â”€ RIGHT PANEL (FORM) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.right-panel {
+  display: flex; flex-direction: column;
+  background: var(--bg2); overflow-y: auto; min-height: 0;
+}
+.right-panel::-webkit-scrollbar { width: 5px; }
+.right-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.panel-header {
+  padding: 8px 12px 7px; background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13px; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--dim); flex-shrink: 0;
+}
+
+.form-body {
+  padding: 12px; display: flex; flex-direction: column; gap: 12px; flex: 1;
+}
+.form-group { display: flex; flex-direction: column; gap: 5px; }
+.form-group > label { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }
+.input-row { display: flex; gap: 7px; align-items: center; }
+.input-row label { font-size: 11px; color: var(--dim); white-space: nowrap; }
+
+.form-input {
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); border-radius: var(--radius);
+  padding: 5px 7px; font-family: 'JetBrains Mono', monospace;
+  font-size: 12px; width: 100%; outline: none; transition: border-color 0.1s;
+}
+.form-input:focus { border-color: var(--accent); }
+
+.key-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 5px;
+}
+.key-btn {
+  background: var(--surface); border: 2px solid var(--border);
+  border-radius: var(--radius); padding: 8px 0; cursor: pointer;
+  text-align: center; font-family: 'Barlow Condensed', sans-serif;
+  font-size: 15px; font-weight: 700; color: var(--dim);
+  transition: all 0.1s; user-select: none;
+}
+.key-btn:hover { border-color: var(--dim); color: var(--text); }
+.key-btn[data-key=up]    { grid-column: 1 / 3; }
+.key-btn[data-key=down]  { grid-column: 1 / 3; }
+.key-btn[data-key=left]  { grid-column: 1; }
+.key-btn[data-key=right] { grid-column: 2; }
+.key-btn.active[data-key=up]    { border-color: var(--up);    color: var(--up);    background: rgba(57,255,133,0.08); }
+.key-btn.active[data-key=down]  { border-color: var(--down);  color: var(--down);  background: rgba(255,58,92,0.08); }
+.key-btn.active[data-key=left]  { border-color: var(--left);  color: var(--left);  background: rgba(58,158,255,0.08); }
+.key-btn.active[data-key=right] { border-color: var(--right); color: var(--right); background: rgba(255,156,58,0.08); }
+
+.form-hint { font-size: 10px; color: var(--dim); line-height: 1.6; }
+.form-actions { display: flex; flex-direction: column; gap: 5px; margin-top: auto; padding-top: 6px; }
+
+/* â”€â”€â”€ BUTTONS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.btn {
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text); border-radius: var(--radius);
+  padding: 4px 9px; cursor: pointer;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  transition: background 0.1s, border-color 0.1s; white-space: nowrap;
+}
+.btn:hover { background: var(--border); }
+.btn-accent { background: var(--accent); border-color: var(--accent); color: #07070d; font-weight: 700; }
+.btn-accent:hover { background: #e6c009; border-color: #e6c009; }
+.btn-ghost { background: transparent; border-color: var(--border); color: var(--dim); }
+.btn-ghost:hover { color: var(--text); border-color: var(--dim); }
+.btn-danger { background: transparent; border-color: var(--down); color: var(--down); }
+.btn-danger:hover { background: rgba(255,58,92,0.1); }
+.btn-rec { background: var(--rec); border-color: var(--rec); color: #fff; font-weight: 700; }
+.btn-rec:hover { background: #cc2040; }
+.btn-full { width: 100%; padding: 7px; font-size: 12px; }
+.btn-script { background: var(--accent2); border-color: var(--accent2); color: white; font-weight: 700; }
+.btn-script:hover { background: #e55a25; }
+
+.btn-pip {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--dim); border-radius: var(--radius);
+  padding: 3px 8px; cursor: pointer;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 0.5px; transition: all 0.1s;
+}
+.btn-pip:hover { color: var(--accent); border-color: var(--accent); }
+.btn-pip.active { color: var(--accent); border-color: var(--accent); background: rgba(255,214,10,0.06); }
+.btn-attached { color: var(--up); border-color: var(--up); background: rgba(57,255,133,0.08); }
+.btn-attached:hover { background: rgba(57,255,133,0.14); }
+
+/* â”€â”€â”€ NOTICE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.notice {
+  font-size: 10px; color: var(--dim); background: var(--surface2);
+  border: 1px solid var(--border2); border-radius: var(--radius);
+  padding: 7px 9px; line-height: 1.7;
+}
+.notice strong { color: var(--accent); }
+
+/* â”€â”€â”€ MODAL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.modal-bg {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.75); z-index: 100;
+  align-items: center; justify-content: center;
+}
+.modal-bg.open { display: flex; }
+.modal {
+  background: var(--surface); border: 1px solid var(--border);
+  border-top: 2px solid var(--accent2); border-radius: 4px;
+  padding: 18px; width: 90%; max-width: 480px;
+}
+.modal h3 {
+  font-family: 'Barlow Condensed', sans-serif; font-size: 17px;
+  font-weight: 700; letter-spacing: 1px; color: var(--accent2); margin-bottom: 9px;
+}
+.modal p { font-size: 11px; color: var(--dim); line-height: 1.7; margin-bottom: 12px; }
+.modal-actions { display: flex; gap: 7px; justify-content: flex-end; }
+.script-preview {
+  background: var(--bg); border: 1px solid var(--border2);
+  border-radius: var(--radius); padding: 9px; font-size: 10px; color: var(--dim);
+  max-height: 110px; overflow-y: auto; margin-bottom: 10px;
+  font-family: 'JetBrains Mono', monospace; white-space: pre; line-height: 1.6;
+}
+
+/* â”€â”€â”€ SPLICE MODAL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.splice-area {
+  background: var(--bg); border: 1px solid var(--border2);
+  border-radius: 3px; padding: 10px; margin-bottom: 10px;
+}
+.splice-row {
+  display: flex; gap: 8px; align-items: center;
+  margin-bottom: 6px; font-size: 11px; color: var(--dim);
+}
+.splice-row input {
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); border-radius: var(--radius);
+  padding: 3px 6px; width: 80px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; outline: none;
+}
+.splice-row input:focus { border-color: var(--accent); }
+.splice-key-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.splice-key-btn {
+  font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+  font-size: 13px; padding: 4px 10px; border-radius: 2px;
+  cursor: pointer; border: 2px solid var(--border);
+  background: var(--surface); color: var(--dim); transition: all 0.1s;
+}
+.splice-key-btn.active[data-key=up]    { border-color: var(--up);    color: var(--up); }
+.splice-key-btn.active[data-key=down]  { border-color: var(--down);  color: var(--down); }
+.splice-key-btn.active[data-key=left]  { border-color: var(--left);  color: var(--left); }
+.splice-key-btn.active[data-key=right] { border-color: var(--right); color: var(--right); }
+
+/* â”€â”€â”€ REC TOP BAR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.rec-overlay {
+  position: fixed; top: 0; left: 0; right: 0; height: 3px;
+  background: var(--rec); z-index: 9999; display: none;
+  animation: recbar 1s infinite;
+}
+.rec-overlay.active { display: block; }
+@keyframes recbar { 0%,100%{opacity:1} 50%{opacity:0.35} }
+
+/* â”€â”€â”€ TOAST â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+@keyframes fadeup {
+  0%   { opacity:0; transform:translate(-50%,10px); }
+  20%  { opacity:1; transform:translate(-50%,0); }
+  80%  { opacity:1; }
+  100% { opacity:0; transform:translate(-50%,-6px); }
+}
+</style>
+</head>
+<body>
+
+<div class="rec-overlay" id="recOverlay"></div>
+
+<div class="app">
+  <!-- HEADER -->
+  <header>
+    <div class="logo">Poly<span>TAS</span></div>
+
+    <div class="rec-indicator" id="recIndicator">
+      <div class="rec-dot"></div>
+      <span id="recLabel">REC</span>
+    </div>
+
+    <div class="header-right">
+      <button class="btn-pip" id="pipBtn" onclick="openPip()" title="Open PolyTAS in a Picture-in-Picture window">OPEN PiP</button>
+      <button class="btn btn-ghost" id="attachBtn" onclick="attachToGame()" title="Attach key capture to the active Polytrack tab">ATTACH GAME</button>
+      <button class="btn btn-ghost" style="padding:3px 7px;font-size:10px" onclick="showHelp()">? HELP</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <!-- LEFT PANEL -->
+    <div class="left-panel">
+      <!-- TOOLBAR -->
+      <div class="toolbar">
+        <button class="btn" onclick="importTAS()">â†‘ IMPORT</button>
+        <button class="btn" onclick="exportTAS()">â†“ EXPORT</button>
+        <button class="btn btn-rec" id="recBtn" onclick="toggleRecording()">âº REC</button>
+        <div class="toolbar-sep"></div>
+        <div class="frame-counter">
+          <em id="segCount">0</em> segs Â·
+          <em id="frameCount">0</em> frames
+        </div>
+      </div>
+
+      <!-- SETTINGS -->
+      <div class="settings-bar">
+        <label>FRAMES
+          <input type="number" id="totalFrames" value="3600" min="60" max="72000" step="60" oninput="onSettingsChange()">
+        </label>
+        <label>FPS
+          <input type="number" id="fps" value="60" min="30" max="120" oninput="onSettingsChange()">
+        </label>
+        <div class="duration-display">DUR: <strong id="durDisplay">60.00s</strong></div>
+      </div>
+
+      <!-- TIMELINE -->
+      <div class="timeline-wrap">
+        <div class="timeline-label">
+          TIMELINE
+          <span class="tl-hint">click=start Â· shift+click=end</span>
+        </div>
+        <canvas id="timeline"></canvas>
+        <div class="tl-legend">
+          <div class="tl-legend-item"><div class="tl-legend-dot" style="background:var(--up)"></div>UP</div>
+          <div class="tl-legend-item"><div class="tl-legend-dot" style="background:var(--down)"></div>DOWN</div>
+          <div class="tl-legend-item"><div class="tl-legend-dot" style="background:var(--left)"></div>LEFT</div>
+          <div class="tl-legend-item"><div class="tl-legend-dot" style="background:var(--right)"></div>RIGHT</div>
+        </div>
+      </div>
+
+      <!-- TABS -->
+      <div class="tab-bar">
+        <button class="tab-btn active" id="tabSegments" onclick="switchTab('segments')">SEGMENTS</button>
+        <button class="tab-btn" id="tabFrames" onclick="switchTab('frames')">FRAME EDITOR</button>
+      </div>
+
+      <!-- SEGMENT LIST -->
+      <div class="segments-panel" id="segList">
+        <div class="empty-state">No segments yet.<br>Add one with the panel â†’ or hit âº REC to record live.</div>
+      </div>
+
+      <!-- FRAME GRID PANEL -->
+      <div class="frame-grid-panel" id="frameGridPanel">
+        <div class="fg-controls">
+          <label>FROM FRAME
+            <input type="number" id="fgStart" value="0" min="0" oninput="renderFrameGrid()">
+          </label>
+          <label>TO
+            <input type="number" id="fgEnd" value="120" min="1" oninput="renderFrameGrid()">
+          </label>
+          <button class="btn btn-ghost" style="margin-left:auto;font-size:10px;padding:2px 7px" onclick="fgSelectAll()">ALL</button>
+        </div>
+        <div class="fg-scroll">
+          <table class="fg-table" id="fgTable">
+            <thead>
+              <tr>
+                <th>FRAME</th>
+                <th class="fg-th-up">â†‘ UP</th>
+                <th class="fg-th-down">â†“ DN</th>
+                <th class="fg-th-left">â† LT</th>
+                <th class="fg-th-right">RT â†’</th>
+              </tr>
+            </thead>
+            <tbody id="fgBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- FOOTER -->
+      <div class="footer">
+        <button class="btn btn-danger" onclick="clearAll()">âœ• CLEAR</button>
+        <button class="btn" onclick="openSpliceModal()" title="Replace a frame range with new inputs">âœ‚ SPLICE</button>
+        <div style="flex:1"></div>
+        <button class="btn btn-script btn-full" style="max-width:200px" onclick="generateScript()">â–¶ COPY SCRIPT</button>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL (EDITOR) -->
+    <div class="right-panel">
+      <div class="panel-header" id="formTitle">ADD SEGMENT</div>
+      <div class="form-body">
+
+        <div class="form-group">
+          <label>FRAME RANGE</label>
+          <div class="input-row">
+            <label>FROM</label>
+            <input type="number" class="form-input" id="formStart" value="0" min="0" oninput="previewSegment()">
+          </div>
+          <div class="input-row">
+            <label>TO</label>
+            <input type="number" class="form-input" id="formEnd" value="120" min="1" oninput="previewSegment()">
+          </div>
+          <div class="form-hint" id="segDurHint">Duration: 120 frames Â· 2.00s</div>
+        </div>
+
+        <div class="form-group">
+          <label>KEYS (click to toggle)</label>
+          <div class="key-grid">
+            <div class="key-btn" data-key="up"    onclick="toggleKey('up')">â†‘ ACCEL</div>
+            <div class="key-btn" data-key="left"  onclick="toggleKey('left')">â† LEFT</div>
+            <div class="key-btn" data-key="right" onclick="toggleKey('right')">RIGHT â†’</div>
+            <div class="key-btn" data-key="down"  onclick="toggleKey('down')">â†“ BRAKE</div>
+          </div>
+        </div>
+
+        <div class="notice">
+          <strong>Ctrl+Shift+.</strong> â€” toggle recording from anywhere.<br>
+          <strong>PiP</strong> â€” overlay PolyTAS on top of Polytrack.<br>
+          <strong>Frame Editor</strong> â€” edit individual key presses per frame.
+        </div>
+
+        <div class="form-actions">
+          <button class="btn btn-accent btn-full" id="saveBtn" onclick="saveSegment()">+ ADD SEGMENT</button>
+          <button class="btn btn-ghost btn-full" id="cancelBtn" style="display:none" onclick="cancelEdit()">CANCEL EDIT</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SCRIPT MODAL -->
+<div class="modal-bg" id="modal">
+  <div class="modal">
+    <h3 id="modalTitle"></h3>
+    <p id="modalDesc"></p>
+    <div class="script-preview" id="scriptPreview" style="display:none"></div>
+    <div class="modal-actions" id="modalActions"></div>
+  </div>
+</div>
+
+<!-- SPLICE MODAL -->
+<div class="modal-bg" id="spliceModal">
+  <div class="modal" style="border-top-color:var(--left)">
+    <h3 style="color:var(--left)">âœ‚ SPLICE SEGMENT</h3>
+    <p>Replace a frame range with new inputs. Existing segments overlapping this range are trimmed or removed.</p>
+    <div class="splice-area">
+      <div class="splice-row">
+        <span>FROM frame</span>
+        <input type="number" id="spliceStart" value="0" min="0">
+        <span>TO frame</span>
+        <input type="number" id="spliceEnd" value="60" min="1">
+      </div>
+      <div style="font-size:10px;color:var(--dim);margin-bottom:6px;">Keys to hold (leave empty to erase):</div>
+      <div class="splice-key-row" id="spliceKeyRow">
+        <button class="splice-key-btn" data-key="up"    onclick="toggleSpliceKey('up')">â†‘ UP</button>
+        <button class="splice-key-btn" data-key="down"  onclick="toggleSpliceKey('down')">â†“ DOWN</button>
+        <button class="splice-key-btn" data-key="left"  onclick="toggleSpliceKey('left')">â† LEFT</button>
+        <button class="splice-key-btn" data-key="right" onclick="toggleSpliceKey('right')">RIGHT â†’</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeSpliceModal()">CANCEL</button>
+      <button class="btn btn-accent" onclick="applySplice()">APPLY SPLICE</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept=".json" style="display:none" onchange="handleFileImport(event)">
+
+<script src="polytas.js"></script>
+</body>
+</html>
