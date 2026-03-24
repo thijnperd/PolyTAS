@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="20" fill="#07070d"/>
+  <rect x="2" y="2" width="124" height="124" rx="18" fill="#111120"/>
+  <rect x="0" y="108" width="128" height="20" rx="0" fill="#FFD60A"/>
+  <rect x="0" y="108" width="128" height="6" fill="#FFD60A"/>
+  <text x="64" y="72" font-family="Arial Black, Arial, sans-serif" font-weight="900" font-size="52" fill="#FFD60A" text-anchor="middle" dominant-baseline="middle" letter-spacing="-2">PT</text>
+  <rect x="8" y="118" width="8" height="4" rx="1" fill="#07070d" opacity="0.6"/>
+  <rect x="20" y="118" width="8" height="4" rx="1" fill="#07070d" opacity="0.6"/>
+  <rect x="32" y="118" width="8" height="4" rx="1" fill="#07070d" opacity="0.6"/>
+</svg>

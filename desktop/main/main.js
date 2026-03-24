@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -8,6 +8,15 @@ let config = { gameUrl: '' };
 let isQuitting = false;
 let gameReady = false;
 let pendingScripts = [];
+
+const iconSvgPath = path.join(__dirname, '..', 'assets', 'icon.svg');
+const iconPngPath = path.join(__dirname, '..', 'assets', 'icon.png');
+const iconImage = (() => {
+  const img = nativeImage.createFromPath(iconSvgPath);
+  if (img && !img.isEmpty()) return img;
+  const fallback = nativeImage.createFromPath(iconPngPath);
+  return fallback && !fallback.isEmpty() ? fallback : null;
+})();
 
 const configPath = () => path.join(app.getPath('userData'), 'config.json');
 
@@ -58,10 +67,17 @@ function attachGame() {
 function createWindow() {
   loadConfig();
 
+  app.setName('PolyTAS');
+  app.setAppUserModelId('com.polytas.desktop');
+  if (process.platform === 'darwin' && app.dock && iconImage) {
+    app.dock.setIcon(iconImage);
+  }
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     backgroundColor: '#07070d',
+    icon: iconImage || iconPngPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
