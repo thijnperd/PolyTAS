@@ -955,21 +955,27 @@ function generateScript() {
 
   const preview = script.split('\n').slice(0, 5).join('\n') + '\n// ...';
 
+  const actions = [];
+  if (isDesktopApp) {
+    actions.push({ label: 'RUN IN GAME', cls: 'btn-accent', action: () => runScriptInGame(script) });
+  }
+  actions.push(
+    { label: '\uD83D\uDCCB COPY', cls: 'btn-script', action: () => {
+      navigator.clipboard.writeText(script).catch(() => {
+        const ta = Object.assign(document.createElement('textarea'), { value: script });
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+      });
+      closeModal(); showToast('Script copied!');
+    }},
+    { label: 'CLOSE', cls: 'btn-ghost', action: closeModal }
+  );
+
   showModal(
     '\u25B6 REPLAY SCRIPT READY',
     '<strong>' + rle.length + '</strong> RLE blocks &middot; ' + totalFrames + ' frames.<br><br>' +
     'Open Polytrack &rarr; F12 &rarr; Console &rarr; paste. Type <strong>polyTASStop()</strong> to abort.',
     preview,
-    [
-      { label: '\uD83D\uDCCB COPY', cls: 'btn-script', action: () => {
-        navigator.clipboard.writeText(script).catch(() => {
-          const ta = Object.assign(document.createElement('textarea'), { value: script });
-          document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
-        });
-        closeModal(); showToast('Script copied!');
-      }},
-      { label: 'CLOSE', cls: 'btn-ghost', action: closeModal }
-    ]
+    actions
   );
 }
 
@@ -991,6 +997,25 @@ function showModal(title, desc, preview, actions) {
     document.getElementById('modalActions').appendChild(btn);
   });
   document.getElementById('modal').classList.add('open');
+}
+
+function runScriptInGame(script) {
+  if (!isDesktopApp || !window.PolyTASDesktop) return;
+  if (!gameUrl) {
+    showToast('Set a game URL first.');
+    return;
+  }
+  setGameStatus('Running script...');
+  window.PolyTASDesktop.runScript(script)
+    .then(() => {
+      closeModal();
+      setGameStatus('Script running in game.');
+      showToast('Script injected into game.');
+    })
+    .catch(err => {
+      setGameStatus('Script failed to run.');
+      showToast('Script failed: ' + (err?.message || err));
+    });
 }
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
 document.getElementById('modal').addEventListener('click', e => {

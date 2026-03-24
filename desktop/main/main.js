@@ -5,6 +5,9 @@ const fs = require('fs');
 let mainWindow = null;
 let gameView = null;
 let config = { gameUrl: '' };
+let isQuitting = false;
+let gameReady = false;
+let pendingScripts = [];
 
 const configPath = () => path.join(app.getPath('userData'), 'config.json');
 
@@ -37,7 +40,8 @@ function sendToRenderer(msg) {
 }
 
 function loadGameUrl(url) {
-  if (!gameView) return;
+  if (!gameView || isQuitting) return;
+  gameReady = false;
   if (!url) {
     gameView.webContents.loadURL('about:blank');
     return;
@@ -81,10 +85,14 @@ function createWindow() {
   gameView.setAutoResize({ width: false, height: false });
 
   gameView.webContents.on('did-finish-load', () => {
+    gameReady = true;
     sendToRenderer({ type: 'ATTACH_STATUS', status: 'attached' });
+    flushPendingScripts();
   });
 
   gameView.webContents.on('did-fail-load', (_event, _code, _desc, url) => {
+    gameReady = false;
+    pendingScripts = [];
     sendToRenderer({
       type: 'ATTACH_STATUS',
       status: 'detached',
@@ -95,6 +103,18 @@ function createWindow() {
   if (config.gameUrl) {
     loadGameUrl(config.gameUrl);
   }
+
+  mainWindow.on('close', () => {
+    isQuitting = true;
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    if (gameView) {
+      gameView.webContents.removeAllListeners();
+    }
+    gameView = null;
+  });
 }
 
 app.whenReady().then(createWindow);
@@ -105,6 +125,15 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
+});
+
+app.on('before-quit', () => {
+  isQuitting = true;
+  if (pendingScripts.length) {
+    const err = new Error('App is quitting.');
+    pendingScripts.forEach(item => item.reject(err));
+    pendingScripts = [];
+  }
 });
 
 ipcMain.on('polytas:editor-message', (_event, msg) => {
@@ -135,9 +164,44 @@ ipcMain.on('polytas:set-game-bounds', (_event, bounds) => {
 ipcMain.handle('polytas:get-game-url', () => config.gameUrl || '');
 
 ipcMain.handle('polytas:set-game-url', (_event, url) => {
+  if (isQuitting) return config.gameUrl || '';
   const normalized = normalizeUrl(url);
   config.gameUrl = normalized;
   saveConfig();
   loadGameUrl(normalized);
   return normalized;
 });
+
+ipcMain.handle('polytas:run-script', async (_event, script) => {
+  if (!gameView || !gameView.webContents || isQuitting) {
+    throw new Error('Game view is not ready.');
+  }
+  if (!script || typeof script !== 'string') {
+    throw new Error('No script provided.');
+  }
+  if (!gameReady) {
+    return new Promise((resolve, reject) => {
+      pendingScripts.push({ script, resolve, reject });
+    });
+  }
+  return executeScriptNow(script);
+});
+
+function executeScriptNow(script) {
+  if (!gameView || !gameView.webContents) {
+    return Promise.reject(new Error('Game view is not ready.'));
+  }
+  if (mainWindow) mainWindow.focus();
+  gameView.webContents.focus();
+  gameView.webContents.executeJavaScript('window.focus();', true).catch(() => {});
+  return gameView.webContents.executeJavaScript(script, true);
+}
+
+function flushPendingScripts() {
+  if (!pendingScripts.length) return;
+  const queue = pendingScripts.slice();
+  pendingScripts = [];
+  queue.forEach(item => {
+    executeScriptNow(item.script).then(item.resolve).catch(item.reject);
+  });
+}
