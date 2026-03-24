@@ -1,4 +1,4 @@
-﻿// ================================================================
+// ================================================================
 // STATE
 // ================================================================
 let segments = [];
@@ -192,18 +192,18 @@ function startRecording() {
   recordingStartFrame = segments.length > 0 ? Math.max(...segments.map(s => s.end)) : 0;
 
   document.getElementById('recIndicator').classList.add('recording');
-  document.getElementById('recLabel').textContent = 'REC â€¢ 0f';
-  document.getElementById('recBtn').textContent = 'â¹ STOP';
+  document.getElementById('recLabel').textContent = 'REC \u2022 0f';
+  document.getElementById('recBtn').textContent = '\u23F9 STOP';
   document.getElementById('recOverlay').classList.add('active');
 
   const frameDuration = 1000 / fps;
   recordInterval = setInterval(() => {
     recordedFrames.push(recordHeldKeys);
     recordFrameCount++;
-    document.getElementById('recLabel').textContent = 'REC â€¢ ' + recordFrameCount + 'f';
+    document.getElementById('recLabel').textContent = 'REC \u2022 ' + recordFrameCount + 'f';
   }, frameDuration);
 
-  showToast('Recording â€” Ctrl+Shift+. to stop');
+  showToast('Recording \u2014 Ctrl+Shift+. to stop');
 }
 
 function stopRecording() {
@@ -214,7 +214,7 @@ function stopRecording() {
 
   document.getElementById('recIndicator').classList.remove('recording');
   document.getElementById('recLabel').textContent = 'REC';
-  document.getElementById('recBtn').textContent = 'âº REC';
+  document.getElementById('recBtn').textContent = '\u25CF REC';
   document.getElementById('recOverlay').classList.remove('active');
 
   if (recordedFrames.length === 0) {
@@ -225,10 +225,10 @@ function stopRecording() {
   const newSegs = rleToSegments(recordedFrames, recordingStartFrame);
   newSegs.forEach(s => segments.push({ id: nextId++, start: s.start, end: s.end, keys: s.keys, recorded: true }));
   renderSegments();
-  showToast('Recorded ' + recordedFrames.length + 'f â†’ ' + newSegs.length + ' segment(s)');
+  showToast('Recorded ' + recordedFrames.length + 'f \u2192 ' + newSegs.length + ' segment(s)');
 }
 
-// Convert raw bitmask array â†’ compressed segments
+// Convert raw bitmask array -> compressed segments
 function rleToSegments(frames, offset) {
   const segs = [];
   let i = 0;
@@ -260,7 +260,7 @@ const ctx = canvas.getContext('2d');
 
 const TRACK_ORDER = ['up', 'left', 'right', 'down'];
 const KEY_COLORS  = { up: '#39ff85', down: '#ff3a5c', left: '#3a9eff', right: '#ff9c3a' };
-const KEY_LABELS  = { up: 'â†‘', down: 'â†“', left: 'â†', right: 'â†’' };
+const KEY_LABELS  = { up: '\u2191', down: '\u2193', left: '\u2190', right: '\u2192' };
 
 function resizeCanvas() {
   const dpr  = window.devicePixelRatio || 1;
@@ -485,7 +485,7 @@ function previewSegment() {
   const end   = parseInt(document.getElementById('formEnd').value)   || 0;
   const dur   = Math.max(0, end - start);
   document.getElementById('segDurHint').textContent =
-    'Duration: ' + dur + ' frames Â· ' + (dur / fps).toFixed(2) + 's';
+    'Duration: ' + dur + ' frames \u00B7 ' + (dur / fps).toFixed(2) + 's';
   previewSeg = { id: 'preview', start, end, keys: [...formKeys] };
   drawTimeline();
 }
@@ -543,7 +543,7 @@ function editSegment(id) {
     btn.classList.toggle('active', formKeys.has(btn.dataset.key));
   });
   document.getElementById('formTitle').textContent = 'EDIT SEG #' + seg.id;
-  document.getElementById('saveBtn').textContent = 'âœ“ SAVE CHANGES';
+  document.getElementById('saveBtn').textContent = '\u2714 SAVE CHANGES';
   document.getElementById('cancelBtn').style.display = '';
   previewSegment();
   renderSegments();
@@ -602,7 +602,7 @@ function applySplice() {
   segments = surviving.sort((a, b) => a.start - b.start);
   closeSpliceModal();
   renderSegments();
-  showToast('Spliced f' + start + 'â†’f' + end);
+  showToast('Spliced f' + start + '\u2192f' + end);
 }
 
 // ================================================================
@@ -613,7 +613,7 @@ function renderSegments() {
   const sorted = [...segments].sort((a, b) => a.start - b.start);
 
   if (!sorted.length) {
-    list.innerHTML = '<div class="empty-state">No segments yet.<br>Add one with the panel â†’ or hit âº REC to record live.</div>';
+    list.innerHTML = '<div class="empty-state">No segments yet.<br>Add one with the panel &rarr; or hit &#9679; REC to record live.</div>';
     updateStats(); drawTimeline(); return;
   }
 
@@ -624,13 +624,13 @@ function renderSegments() {
     const recB   = seg.recorded ? '<span class="seg-rec-badge">REC</span>' : '';
     return '<div class="seg-card" style="' + (isEdit ? 'border-color:var(--accent)' : '') + '">' +
       '<div class="seg-index">' + (i+1) + '</div>' +
-      '<div class="seg-range">f' + seg.start + 'â†’' + seg.end + '</div>' +
+      '<div class="seg-range">f' + seg.start + '\u2192' + seg.end + '</div>' +
       '<div class="seg-dur">' + dur + 'f</div>' +
       '<div class="seg-keys">' + badges + '</div>' +
       recB +
       '<div class="seg-actions">' +
         '<button class="btn" onclick="editSegment(' + seg.id + ')">EDIT</button>' +
-        '<button class="btn btn-danger" onclick="deleteSegment(' + seg.id + ')">âœ•</button>' +
+        '<button class="btn btn-danger" onclick="deleteSegment(' + seg.id + ')">\u00D7</button>' +
       '</div></div>';
   }).join('');
 
@@ -718,7 +718,7 @@ function generateScript() {
   const date = new Date().toISOString();
 
   const script =
-'// PolyTAS Replay Script â€” ' + date + '\n' +
+'// PolyTAS Replay Script -- ' + date + '\n' +
 '// ' + segments.length + ' segments | ' + totalFrames + 'f @ ' + fps + 'fps\n' +
 '(function(){\n' +
 '  \'use strict\';\n' +
@@ -743,13 +743,13 @@ function generateScript() {
 '    const tf=Math.min(Math.floor((ts-st)/FT),inp.length-1);\n' +
 '    while(frame<=tf)upd(inp[frame++]);\n' +
 '    if(frame<inp.length)requestAnimationFrame(loop);\n' +
-'    else{upd(0);console.log(\'%c[PolyTAS] Done! ðŸ\',\'color:#FFD60A;font-weight:bold\');}\n' +
+'    else{upd(0);console.log(\'%c[PolyTAS] Done! \u{1F3C1}\',\'color:#FFD60A;font-weight:bold\');}\n' +
 '  }\n' +
 '  window.polyTASStop=()=>{upd(0);frame=inp.length;console.log(\'[PolyTAS] Stopped.\');};\n' +
 '  console.log(\'%c[PolyTAS] Restarting...\',\'color:#39ff85\');\n' +
 '  dk(\'r\',\'keydown\');setTimeout(()=>{dk(\'r\',\'keyup\');\n' +
 '  setTimeout(()=>{\n' +
-'    console.log(\'%c[PolyTAS] Replaying ' + totalFrames + 'f @ ' + fps + 'fps â€” polyTASStop() to abort\',\'color:#3a9eff\');\n' +
+'    console.log(\'%c[PolyTAS] Replaying ' + totalFrames + 'f @ ' + fps + 'fps -- polyTASStop() to abort\',\'color:#3a9eff\');\n' +
 '    requestAnimationFrame(loop);\n' +
 '  },700);},120);\n' +
 '})();';
@@ -757,12 +757,12 @@ function generateScript() {
   const preview = script.split('\n').slice(0, 5).join('\n') + '\n// ...';
 
   showModal(
-    'â–¶ REPLAY SCRIPT READY',
-    '<strong>' + rle.length + '</strong> RLE blocks Â· ' + totalFrames + ' frames.<br><br>' +
-    'Open Polytrack â†’ F12 â†’ Console â†’ paste. Type <strong>polyTASStop()</strong> to abort.',
+    '\u25B6 REPLAY SCRIPT READY',
+    '<strong>' + rle.length + '</strong> RLE blocks &middot; ' + totalFrames + ' frames.<br><br>' +
+    'Open Polytrack &rarr; F12 &rarr; Console &rarr; paste. Type <strong>polyTASStop()</strong> to abort.',
     preview,
     [
-      { label: 'ðŸ“‹ COPY', cls: 'btn-script', action: () => {
+      { label: '\uD83D\uDCCB COPY', cls: 'btn-script', action: () => {
         navigator.clipboard.writeText(script).catch(() => {
           const ta = Object.assign(document.createElement('textarea'), { value: script });
           document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
@@ -806,12 +806,12 @@ document.getElementById('spliceModal').addEventListener('click', e => {
 // ================================================================
 function showHelp() {
   showModal('HOW TO USE POLYTAS',
-    '<strong>âº REC / Ctrl+Shift+.</strong> â€” Start/stop recording. Use <strong>ATTACH GAME</strong> so key capture comes from the Polytrack tab.<br><br>' +
-    '<strong>OPEN PiP</strong> â€” Opens a Chrome Picture-in-Picture window so PolyTAS stays on top while you play.<br><br>' +
-    '<strong>FRAME EDITOR tab</strong> â€” Scrollable grid where each row is one frame and each column is a key. Click or drag cells to toggle individual key presses.<br><br>' +
-    '<strong>âœ‚ SPLICE</strong> â€” Replace any frame range with a specific set of keys, or erase it entirely.<br><br>' +
-    '<strong>Timeline</strong> â€” Click = set start frame, Shift+click = set end.<br><br>' +
-    '<strong>â–¶ COPY SCRIPT</strong> â€” Paste into Polytrack console (F12 â†’ Console). Type <strong>polyTASStop()</strong> to abort replay.',
+    '<strong>&#9679; REC / Ctrl+Shift+.</strong> &mdash; Start/stop recording. Use <strong>ATTACH GAME</strong> so key capture comes from the Polytrack tab.<br><br>' +
+    '<strong>OPEN PiP</strong> &mdash; Opens a Chrome Picture-in-Picture window so PolyTAS stays on top while you play.<br><br>' +
+    '<strong>FRAME EDITOR tab</strong> &mdash; Scrollable grid where each row is one frame and each column is a key. Click or drag cells to toggle individual key presses.<br><br>' +
+    '<strong>&#9986; SPLICE</strong> &mdash; Replace any frame range with a specific set of keys, or erase it entirely.<br><br>' +
+    '<strong>Timeline</strong> &mdash; Click = set start frame, Shift+click = set end.<br><br>' +
+    '<strong>&#9654; COPY SCRIPT</strong> &mdash; Paste into Polytrack console (F12 &rarr; Console). Type <strong>polyTASStop()</strong> to abort replay.',
     '',
     [{ label: 'GOT IT', cls: 'btn-accent', action: closeModal }]
   );
@@ -823,7 +823,7 @@ function showHelp() {
 function showToast(msg) {
   const t = document.createElement('div');
   t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#39ff85;color:#07070d;padding:7px 16px;border-radius:4px;font-family:JetBrains Mono,monospace;font-size:11px;font-weight:700;z-index:99999;pointer-events:none;animation:fadeup 2.1s forwards';
-  t.textContent = 'âœ“ ' + msg;
+  t.textContent = '\u2714 ' + msg;
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 2200);
 }
