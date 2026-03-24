@@ -83,6 +83,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: false,
     },
   });
 
@@ -94,11 +95,14 @@ function createWindow() {
       contextIsolation: false,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: false,
     },
   });
   mainWindow.setBrowserView(gameView);
   gameView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
   gameView.setAutoResize({ width: false, height: false });
+  mainWindow.webContents.setBackgroundThrottling(false);
+  gameView.webContents.setBackgroundThrottling(false);
 
   gameView.webContents.on('did-finish-load', () => {
     gameReady = true;
@@ -113,6 +117,22 @@ function createWindow() {
       type: 'ATTACH_STATUS',
       status: 'detached',
       error: `Failed to load ${url || 'game URL'}.`,
+    });
+  });
+
+  gameView.webContents.on('before-input-event', (_event, input) => {
+    if (isQuitting) return;
+    if (!input || !input.type) return;
+    if (input.type !== 'keyDown' && input.type !== 'keyUp') return;
+    sendToRenderer({
+      type: input.type === 'keyDown' ? 'KEY_DOWN' : 'KEY_UP',
+      key: input.key,
+      code: input.code,
+      ctrlKey: !!input.control,
+      shiftKey: !!input.shift,
+      altKey: !!input.alt,
+      metaKey: !!input.meta,
+      repeat: !!input.isAutoRepeat,
     });
   });
 
