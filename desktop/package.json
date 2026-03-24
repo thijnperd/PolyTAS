@@ -10,6 +10,7 @@
     "dev": "electron ."
   },
   "devDependencies": {
-    "electron": "^32.0.0"
+    "electron": "^32.0.0",
+    "@nut-tree-fork/nut-js": "^4.2.6"
   }
 }

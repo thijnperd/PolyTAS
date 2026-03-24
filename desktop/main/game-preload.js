@@ -10,6 +10,7 @@ if (!window.__polytasCaptureInstalled) {
   let replayFrame = 0;
   let replayStopped = false;
   let fastFwdTarget = -1;
+  let waitingForStart = false;
   const _origRAF = window.requestAnimationFrame.bind(window);
 
   window.requestAnimationFrame = function (cb) {
@@ -57,7 +58,14 @@ if (!window.__polytasCaptureInstalled) {
     });
   }
 
-  window.addEventListener('keydown', e => sendKey('KEY_DOWN', e), true);
+  window.addEventListener('keydown', e => {
+    if (waitingForStart) {
+      waitingForStart = false;
+      replayActive = true;
+      _restartGame();
+    }
+    sendKey('KEY_DOWN', e);
+  }, true);
   window.addEventListener('keyup', e => sendKey('KEY_UP', e), true);
 
   ipcRenderer.on('polytas:to-game', (_event, msg) => {
@@ -73,8 +81,9 @@ if (!window.__polytasCaptureInstalled) {
         replayInputs = arr;
         replayFrame = msg.startFrame || 0;
         replayStopped = false;
-        replayActive = true;
-        _restartGame();
+        waitingForStart = !!msg.waitForSpace;
+        replayActive = !waitingForStart;
+        if (!waitingForStart) _restartGame();
         break;
       }
 
@@ -93,6 +102,7 @@ if (!window.__polytasCaptureInstalled) {
         _applyBitmask(0);
         replayStopped = true;
         replayActive = false;
+        waitingForStart = false;
         break;
 
       case 'FAST_FORWARD':

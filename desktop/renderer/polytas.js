@@ -908,75 +908,22 @@ function handleFileImport(e) {
 }
 
 // ================================================================
-// REPLAY SCRIPT
+// REPLAY (NATIVE INPUTS)
 // ================================================================
-function generateScript() {
+function runReplay() {
   if (!segments.length) { alert('Add at least one segment first.'); return; }
-  const arr  = buildFrameArray();
-  const rle  = rleEncode(arr);
-  const date = new Date().toISOString();
-
-  const script =
-'// PolyTAS Replay Script -- ' + date + '\n' +
-'// ' + segments.length + ' segments | ' + totalFrames + 'f @ ' + fps + 'fps\n' +
-'(function(){\n' +
-'  \'use strict\';\n' +
-'  const RLE=' + JSON.stringify(rle) + ';\n' +
-'  const inp=[];\n' +
-'  RLE.forEach(([v,c])=>{for(let i=0;i<c;i++)inp.push(v);});\n' +
-'  const FT=1000/' + fps + ';\n' +
-'  const KM={up:[\'ArrowUp\',\'w\'],down:[\'ArrowDown\',\'s\'],left:[\'ArrowLeft\',\'a\'],right:[\'ArrowRight\',\'d\']};\n' +
-'  const BIT={up:1,down:2,left:4,right:8};\n' +
-'  function dk(k,t){document.dispatchEvent(new KeyboardEvent(t,{key:k,bubbles:true,cancelable:true}));}\n' +
-'  let cur=0,frame=0,st=null;\n' +
-'  function upd(nb){\n' +
-'    const ch=cur^nb;\n' +
-'    if(!ch)return;\n' +
-'    Object.keys(BIT).forEach(k=>{\n' +
-'      if(ch&BIT[k])KM[k].forEach(key=>dk(key,(nb&BIT[k])?\'keydown\':\'keyup\'));\n' +
-'    });\n' +
-'    cur=nb;\n' +
-'  }\n' +
-'  function loop(ts){\n' +
-'    if(!st)st=ts;\n' +
-'    const tf=Math.min(Math.floor((ts-st)/FT),inp.length-1);\n' +
-'    while(frame<=tf)upd(inp[frame++]);\n' +
-'    if(frame<inp.length)requestAnimationFrame(loop);\n' +
-'    else{upd(0);console.log(\'%c[PolyTAS] Done! \u{1F3C1}\',\'color:#FFD60A;font-weight:bold\');}\n' +
-'  }\n' +
-'  window.polyTASStop=()=>{upd(0);frame=inp.length;console.log(\'[PolyTAS] Stopped.\');};\n' +
-'  console.log(\'%c[PolyTAS] Restarting...\',\'color:#39ff85\');\n' +
-'  dk(\'r\',\'keydown\');setTimeout(()=>{dk(\'r\',\'keyup\');\n' +
-'  setTimeout(()=>{\n' +
-'    console.log(\'%c[PolyTAS] Replaying ' + totalFrames + 'f @ ' + fps + 'fps -- polyTASStop() to abort\',\'color:#3a9eff\');\n' +
-'    requestAnimationFrame(loop);\n' +
-'  },700);},120);\n' +
-'})();';
-
-  const preview = script.split('\n').slice(0, 5).join('\n') + '\n// ...';
-
-  const actions = [];
-  if (isDesktopApp) {
-    actions.push({ label: 'RUN IN GAME', cls: 'btn-accent', action: () => runScriptInGame(script) });
+  const arr = buildFrameArray();
+  const rle = rleEncode(arr);
+  if (isDesktopApp && window.PolyTASDesktop) {
+    runNativeReplay(rle, arr.length);
+    return;
   }
-  actions.push(
-    { label: '\uD83D\uDCCB COPY', cls: 'btn-script', action: () => {
-      navigator.clipboard.writeText(script).catch(() => {
-        const ta = Object.assign(document.createElement('textarea'), { value: script });
-        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
-      });
-      closeModal(); showToast('Script copied!');
-    }},
-    { label: 'CLOSE', cls: 'btn-ghost', action: closeModal }
-  );
+  alert('Replay requires the desktop app.');
+}
 
-  showModal(
-    '\u25B6 REPLAY SCRIPT READY',
-    '<strong>' + rle.length + '</strong> RLE blocks &middot; ' + totalFrames + ' frames.<br><br>' +
-    'Open Polytrack &rarr; F12 &rarr; Console &rarr; paste. Type <strong>polyTASStop()</strong> to abort.',
-    preview,
-    actions
-  );
+// Backwards compatibility (old button hookup)
+function generateScript() {
+  runReplay();
 }
 
 // ================================================================
@@ -999,22 +946,86 @@ function showModal(title, desc, preview, actions) {
   document.getElementById('modal').classList.add('open');
 }
 
-function runScriptInGame(script) {
+async function copyText(text) {
+  if (!text) return false;
+  if (isDesktopApp && window.PolyTASDesktop?.copyText) {
+    try {
+      return await window.PolyTASDesktop.copyText(text);
+    } catch {
+      return false;
+    }
+  }
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // fall through
+    }
+  }
+  return fallbackCopy(text);
+}
+
+function fallbackCopy(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', 'readonly');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+function runNativeReplay(rle, total) {
   if (!isDesktopApp || !window.PolyTASDesktop) return;
   if (!gameUrl) {
     showToast('Set a game URL first.');
     return;
   }
-  setGameStatus('Running script...');
-  window.PolyTASDesktop.runScript(script)
-    .then(() => {
-      closeModal();
-      setGameStatus('Script running in game.');
-      showToast('Script injected into game.');
+  if (!Array.isArray(rle)) {
+    showToast('No replay data available.');
+    return;
+  }
+  setGameStatus('Starting replay in 5 seconds...');
+  window.PolyTASDesktop.startOsReplay({
+    rle,
+    totalFrames: total || totalFrames,
+    fps,
+    delayMs: 5000,
+  })
+    .then(ok => {
+      if (ok) {
+        closeModal();
+        showToast('Replay scheduled (5s delay).');
+      } else {
+        setGameStatus('OS replay failed.');
+        showToast('OS replay failed.');
+      }
     })
-    .catch(err => {
-      setGameStatus('Script failed to run.');
-      showToast('Script failed: ' + (err?.message || err));
+    .catch(() => {
+      setGameStatus('OS replay failed.');
+      showToast('OS replay failed.');
+    });
+}
+
+function stopReplay() {
+  if (!isDesktopApp || !window.PolyTASDesktop) return;
+  window.PolyTASDesktop.stopOsReplay()
+    .then(() => {
+      setGameStatus('Replay stopped.');
+      showToast('Replay stopped.');
+    })
+    .catch(() => {
+      setGameStatus('Replay stop failed.');
+      showToast('Replay stop failed.');
     });
 }
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
@@ -1044,7 +1055,7 @@ function showHelp() {
     '<strong>FRAME EDITOR tab</strong> &mdash; Scrollable grid where each row is one frame and each column is a key. Click or drag cells to toggle individual key presses.<br><br>' +
     '<strong>&#9986; SPLICE</strong> &mdash; Replace any frame range with a specific set of keys, or erase it entirely.<br><br>' +
     '<strong>Timeline</strong> &mdash; Click = set start frame, Shift+click = set end.<br><br>' +
-    '<strong>&#9654; COPY SCRIPT</strong> &mdash; Paste into Polytrack console (F12 &rarr; Console). Type <strong>polyTASStop()</strong> to abort replay.',
+    '<strong>&#9654; RUN REPLAY</strong> &mdash; Replays the inputs directly in the embedded game.',
     '',
     [{ label: 'GOT IT', cls: 'btn-accent', action: closeModal }]
   );

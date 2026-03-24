@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, nativeImage, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -8,6 +8,15 @@ let config = { gameUrl: '' };
 let isQuitting = false;
 let gameReady = false;
 let pendingScripts = [];
+let osReplayActive = false;
+let osReplayInputs = null;
+let osReplayFrame = 0;
+let osReplayTimer = null;
+let osReplayBits = 0;
+let osReplayDelayTimer = null;
+let nut = null;
+let nutKeyboard = null;
+let nutKey = null;
 
 const iconSvgPath = path.join(__dirname, '..', 'assets', 'icon.svg');
 const iconPngPath = path.join(__dirname, '..', 'assets', 'icon.png');
@@ -17,6 +26,20 @@ const iconImage = (() => {
   const fallback = nativeImage.createFromPath(iconPngPath);
   return fallback && !fallback.isEmpty() ? fallback : null;
 })();
+
+const BIT_KEYS = [
+  { bit: 1, name: 'up' },
+  { bit: 2, name: 'down' },
+  { bit: 4, name: 'left' },
+  { bit: 8, name: 'right' },
+];
+
+const KEY_MAP = {
+  up: 'Up',
+  down: 'Down',
+  left: 'Left',
+  right: 'Right',
+};
 
 const configPath = () => path.join(app.getPath('userData'), 'config.json');
 
@@ -156,7 +179,7 @@ function createWindow() {
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  app.quit();
 });
 
 app.on('activate', () => {
@@ -170,6 +193,9 @@ app.on('before-quit', () => {
     pendingScripts.forEach(item => item.reject(err));
     pendingScripts = [];
   }
+  stopOsReplay();
+  forceCloseWindows();
+  setTimeout(() => app.exit(0), 800);
 });
 
 ipcMain.on('polytas:editor-message', (_event, msg) => {
@@ -222,6 +248,161 @@ ipcMain.handle('polytas:run-script', async (_event, script) => {
   }
   return executeScriptNow(script);
 });
+
+ipcMain.handle('polytas:copy-text', (_event, text) => {
+  if (!text || typeof text !== 'string') return false;
+  clipboard.writeText(text);
+  return true;
+});
+
+ipcMain.handle('polytas:os-replay-start', async (_event, payload) => {
+  if (isQuitting) return false;
+  try {
+    await startOsReplay(payload);
+    return true;
+  } catch (err) {
+    console.warn('OS replay failed:', err);
+    throw err;
+  }
+});
+
+ipcMain.handle('polytas:os-replay-stop', () => {
+  stopOsReplay();
+  return true;
+});
+
+async function ensureNut() {
+  if (nut && nutKeyboard && nutKey) return;
+  const mod = await import('@nut-tree-fork/nut-js');
+  nut = mod;
+  nutKeyboard = mod.keyboard;
+  nutKey = mod.Key;
+  // Lower delays for real-time input.
+  if (nutKeyboard) {
+    nutKeyboard.config.autoDelayMs = 0;
+  }
+}
+
+function decodeRLE(rle, totalFrames) {
+  const arr = new Uint8Array(totalFrames || 0);
+  let f = 0;
+  (rle || []).forEach(([v, c]) => {
+    const end = Math.min(f + c, arr.length);
+    arr.fill(v, f, end);
+    f += c;
+  });
+  return arr;
+}
+
+async function tapKey(key) {
+  if (!nutKeyboard || !nutKey) return;
+  await nutKeyboard.pressKey(key);
+  await sleep(120);
+  await nutKeyboard.releaseKey(key);
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function startOsReplay(payload) {
+  if (!payload || !payload.rle) throw new Error('Missing replay data.');
+  await ensureNut();
+  stopOsReplay();
+
+  const fps = Math.max(1, payload.fps || 60);
+  const totalFrames = payload.totalFrames || 0;
+  osReplayInputs = decodeRLE(payload.rle, totalFrames);
+  osReplayFrame = 0;
+  osReplayBits = 0;
+  osReplayActive = true;
+
+  if (mainWindow) {
+    mainWindow.show();
+    mainWindow.focus();
+  }
+  if (gameView && gameView.webContents) {
+    gameView.webContents.focus();
+  }
+
+  const delayMs = Math.max(0, payload.delayMs || 0);
+  if (delayMs > 0) {
+    osReplayDelayTimer = setTimeout(async () => {
+      osReplayDelayTimer = null;
+      await beginOsReplay(fps);
+    }, delayMs);
+  } else {
+    await beginOsReplay(fps);
+  }
+}
+
+function stopOsReplay() {
+  osReplayActive = false;
+  if (osReplayTimer) clearTimeout(osReplayTimer);
+  osReplayTimer = null;
+  if (osReplayDelayTimer) clearTimeout(osReplayDelayTimer);
+  osReplayDelayTimer = null;
+  releaseAllOsKeys().catch(() => {});
+}
+
+function scheduleOsReplayTick(frameDuration) {
+  if (!osReplayActive) return;
+  osReplayTimer = setTimeout(async () => {
+    try {
+      const nb = osReplayInputs && osReplayFrame < osReplayInputs.length
+        ? osReplayInputs[osReplayFrame]
+        : 0;
+      await applyBitmaskOs(nb);
+      osReplayFrame++;
+      if (osReplayInputs && osReplayFrame < osReplayInputs.length) {
+        scheduleOsReplayTick(frameDuration);
+      } else {
+        stopOsReplay();
+      }
+    } catch (err) {
+      console.warn('OS replay tick failed:', err);
+      stopOsReplay();
+    }
+  }, frameDuration);
+}
+
+async function applyBitmaskOs(nb) {
+  if (!nutKeyboard || !nutKey) return;
+  const changed = osReplayBits ^ nb;
+  if (!changed) return;
+  for (const item of BIT_KEYS) {
+    if (!(changed & item.bit)) continue;
+    const keyName = KEY_MAP[item.name];
+    const key = nutKey[keyName];
+    if (!key) continue;
+    if (nb & item.bit) {
+      await nutKeyboard.pressKey(key);
+    } else {
+      await nutKeyboard.releaseKey(key);
+    }
+  }
+  osReplayBits = nb;
+}
+
+async function releaseAllOsKeys() {
+  if (!nutKeyboard || !nutKey) return;
+  for (const item of BIT_KEYS) {
+    const keyName = KEY_MAP[item.name];
+    const key = nutKey[keyName];
+    if (key) await nutKeyboard.releaseKey(key);
+  }
+  osReplayBits = 0;
+}
+
+async function beginOsReplay(fps) {
+  if (!osReplayActive) return;
+  // Restart run (same as script behavior).
+  if (nutKey?.R) {
+    await tapKey(nutKey.R);
+    await sleep(700);
+  }
+  scheduleOsReplayTick(1000 / fps);
+}
 
 function executeScriptNow(script) {
   if (!gameView || !gameView.webContents) {
