@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PolyTAS - Polytrack TAS Editor</title>
+<link rel="icon" type="image/png" sizes="32x32" href="icons/icon32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/icon16.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Barlow+Condensed:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+
+</head>
+<body>
+
+<div class="rec-overlay" id="recOverlay"></div>
+
+<div class="app">
+  <!-- HEADER -->
+  <header>
+    <div class="logo">Poly<span>TAS</span></div>
+
+    <div class="rec-indicator" id="recIndicator">
+      <div class="rec-dot"></div>
+      <span id="recLabel">REC</span>
+    </div>
+
+    <div class="header-right">
+      <button class="btn-pip" id="pipBtn" onclick="openPip()" title="Open PolyTAS in a Picture-in-Picture window">OPEN PiP</button>
+      <button class="btn btn-ghost" id="attachBtn" onclick="attachToGame()" title="Attach key capture to the active Polytrack tab">ATTACH GAME</button>
+      <button class="btn btn-ghost btn-small" onclick="showHelp()">? HELP</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <!-- LEFT PANEL -->
+    <div class="left-panel">
+      <!-- TOOLBAR -->
+      <div class="toolbar">
+        <button class="btn" onclick="importTAS()">&#8593; IMPORT</button>
+        <button class="btn" onclick="exportTAS()">&#8595; EXPORT</button>
+        <button class="btn btn-rec" id="recBtn" onclick="toggleRecording()">&#9679; REC</button>
+        <div class="toolbar-sep"></div>
+        <div class="frame-counter">
+          <em id="segCount">0</em> segs &middot;
+          <em id="frameCount">0</em> frames
+        </div>
+      </div>
+
+      <!-- SETTINGS -->
+      <div class="settings-bar">
+        <label>FRAMES
+          <input type="number" id="totalFrames" value="3600" min="60" max="72000" step="60" oninput="onSettingsChange()">
+        </label>
+        <label>FPS
+          <input type="number" id="fps" value="60" min="30" max="120" oninput="onSettingsChange()">
+        </label>
+        <div class="duration-display">DUR: <strong id="durDisplay">60.00s</strong></div>
+      </div>
+
+      <!-- TIMELINE -->
+      <div class="timeline-wrap">
+        <div class="timeline-label">
+          TIMELINE
+          <span class="tl-hint">click=start &middot; shift+click=end</span>
+        </div>
+        <canvas id="timeline"></canvas>
+        <div class="tl-legend">
+          <div class="tl-legend-item"><div class="tl-legend-dot tl-dot-up"></div>UP</div>
+          <div class="tl-legend-item"><div class="tl-legend-dot tl-dot-down"></div>DOWN</div>
+          <div class="tl-legend-item"><div class="tl-legend-dot tl-dot-left"></div>LEFT</div>
+          <div class="tl-legend-item"><div class="tl-legend-dot tl-dot-right"></div>RIGHT</div>
+        </div>
+      </div>
+
+      <!-- TABS -->
+      <div class="tab-bar">
+        <button class="tab-btn active" id="tabSegments" onclick="switchTab('segments')">SEGMENTS</button>
+        <button class="tab-btn" id="tabFrames" onclick="switchTab('frames')">FRAME EDITOR</button>
+      </div>
+
+      <!-- SEGMENT LIST -->
+      <div class="segments-panel" id="segList">
+        <div class="empty-state">No segments yet.<br>Add one with the panel &rarr; or hit &#9679; REC to record live.</div>
+      </div>
+
+      <!-- FRAME GRID PANEL -->
+      <div class="frame-grid-panel" id="frameGridPanel">
+        <div class="fg-controls">
+          <label>FROM FRAME
+            <input type="number" id="fgStart" value="0" min="0" oninput="renderFrameGrid()">
+          </label>
+          <label>TO
+            <input type="number" id="fgEnd" value="120" min="1" oninput="renderFrameGrid()">
+          </label>
+          <button class="btn btn-ghost btn-xs ml-auto" onclick="fgSelectAll()">ALL</button>
+        </div>
+        <div class="fg-scroll">
+          <table class="fg-table" id="fgTable">
+            <thead>
+              <tr>
+                <th>FRAME</th>
+                <th class="fg-th-up">UP</th>
+                <th class="fg-th-down">DN</th>
+                <th class="fg-th-left">LT</th>
+                <th class="fg-th-right">RT</th>
+              </tr>
+            </thead>
+            <tbody id="fgBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- FOOTER -->
+      <div class="footer">
+        <button class="btn btn-danger" onclick="clearAll()">&#10005; CLEAR</button>
+        <button class="btn" onclick="openSpliceModal()" title="Replace a frame range with new inputs">&#9986; SPLICE</button>
+        <div class="flex-spacer"></div>
+        <button class="btn btn-script btn-full btn-max-200" onclick="generateScript()">&#9654; COPY SCRIPT</button>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL (EDITOR) -->
+    <div class="right-panel">
+      <div class="panel-header" id="formTitle">ADD SEGMENT</div>
+      <div class="form-body">
+
+        <div class="form-group">
+          <label>FRAME RANGE</label>
+          <div class="input-row">
+            <label>FROM</label>
+            <input type="number" class="form-input" id="formStart" value="0" min="0" oninput="previewSegment()">
+          </div>
+          <div class="input-row">
+            <label>TO</label>
+            <input type="number" class="form-input" id="formEnd" value="120" min="1" oninput="previewSegment()">
+          </div>
+          <div class="form-hint" id="segDurHint">Duration: 120 frames &middot; 2.00s</div>
+        </div>
+
+        <div class="form-group">
+          <label>KEYS (click to toggle)</label>
+          <div class="key-grid">
+            <div class="key-btn" data-key="up"    onclick="toggleKey('up')">&#8593; ACCEL</div>
+            <div class="key-btn" data-key="left"  onclick="toggleKey('left')">&#8592; LEFT</div>
+            <div class="key-btn" data-key="right" onclick="toggleKey('right')">RIGHT &#8594;</div>
+            <div class="key-btn" data-key="down"  onclick="toggleKey('down')">&#8595; BRAKE</div>
+          </div>
+        </div>
+
+        <div class="notice">
+          <strong>Ctrl+Shift+.</strong> &mdash; toggle recording from anywhere.<br>
+          <strong>PiP</strong> &mdash; overlay PolyTAS on top of Polytrack.<br>
+          <strong>Frame Editor</strong> &mdash; edit individual key presses per frame.
+        </div>
+
+        <div class="form-actions">
+          <button class="btn btn-accent btn-full" id="saveBtn" onclick="saveSegment()">+ ADD SEGMENT</button>
+          <button class="btn btn-ghost btn-full is-hidden" id="cancelBtn" onclick="cancelEdit()">CANCEL EDIT</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- GAME PANEL -->
+    <div class="game-panel">
+      <div class="panel-header">GAME PREVIEW</div>
+      <div class="game-controls">
+        <div class="game-url-row">
+          <span>URL</span>
+          <span class="game-url-display" id="gameUrlDisplay">Not set</span>
+          <button class="btn btn-ghost btn-small" id="gameUrlChangeBtn">CHANGE</button>
+        </div>
+        <div class="game-url-edit" id="gameUrlEdit">
+          <input type="text" id="gameUrlInput" placeholder="https://polytrack.example.com">
+          <button class="btn btn-accent" id="gameUrlSetBtn">SET URL</button>
+        </div>
+        <div class="game-status" id="gameStatus">No game loaded.</div>
+      </div>
+      <div class="game-viewport" id="gameViewport">
+        <div class="game-placeholder" id="gamePlaceholder">Set a game URL to load the live preview.</div>
+      </div>
+      <div class="game-footer">
+        <button class="btn btn-ghost btn-small" id="livePreviewBtn">LIVE PREVIEW: ON</button>
+        <div class="game-hint">Edits replay automatically</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SCRIPT MODAL -->
+<div class="modal-bg" id="modal">
+  <div class="modal">
+    <h3 id="modalTitle"></h3>
+    <p id="modalDesc"></p>
+    <div class="script-preview is-hidden" id="scriptPreview"></div>
+    <div class="modal-actions" id="modalActions"></div>
+  </div>
+</div>
+
+<!-- SPLICE MODAL -->
+<div class="modal-bg" id="spliceModal">
+  <div class="modal modal-splice">
+    <h3 class="splice-title">&#9986; SPLICE SEGMENT</h3>
+    <p>Replace a frame range with new inputs. Existing segments overlapping this range are trimmed or removed.</p>
+    <div class="splice-area">
+      <div class="splice-row">
+        <span>FROM frame</span>
+        <input type="number" id="spliceStart" value="0" min="0">
+        <span>TO frame</span>
+        <input type="number" id="spliceEnd" value="60" min="1">
+      </div>
+      <div class="splice-hint">Keys to hold (leave empty to erase):</div>
+      <div class="splice-key-row" id="spliceKeyRow">
+        <button class="splice-key-btn" data-key="up"    onclick="toggleSpliceKey('up')">&#8593; UP</button>
+        <button class="splice-key-btn" data-key="down"  onclick="toggleSpliceKey('down')">&#8595; DOWN</button>
+        <button class="splice-key-btn" data-key="left"  onclick="toggleSpliceKey('left')">&#8592; LEFT</button>
+        <button class="splice-key-btn" data-key="right" onclick="toggleSpliceKey('right')">RIGHT &#8594;</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeSpliceModal()">CANCEL</button>
+      <button class="btn btn-accent" onclick="applySplice()">APPLY SPLICE</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" class="is-hidden" accept=".json" onchange="handleFileImport(event)">
+
+<script src="polytas.js"></script>
+</body>
+</html>

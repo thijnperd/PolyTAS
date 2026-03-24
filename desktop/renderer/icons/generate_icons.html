@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>PolyTAS Icon Generator</title>
+<style>body{background:#111;color:#eee;font-family:monospace;padding:20px;} a{color:#FFD60A;display:block;margin:4px 0;}</style>
+</head>
+<body>
+<h2>PolyTAS Icon Generator</h2>
+<p>Click each link to download the PNG, then save it in the <code>icons/</code> folder with the correct filename.</p>
+<div id="links"></div>
+<canvas id="c" style="display:none"></canvas>
+<script>
+const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="20" fill="#07070d"/>
+  <rect x="2" y="2" width="124" height="124" rx="18" fill="#111120"/>
+  <rect x="0" y="108" width="128" height="6" fill="#FFD60A"/>
+  <text x="64" y="68" font-family="Arial Black, Arial, sans-serif" font-weight="900" font-size="52" fill="#FFD60A" text-anchor="middle" dominant-baseline="middle" letter-spacing="-2">PT</text>
+</svg>`;
+
+const sizes = [16, 32, 48, 128];
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const linksDiv = document.getElementById('links');
+
+const blob = new Blob([svg], {type: 'image/svg+xml'});
+const url = URL.createObjectURL(blob);
+const img = new Image();
+
+img.onload = () => {
+  sizes.forEach(size => {
+    canvas.width = size;
+    canvas.height = size;
+    ctx.clearRect(0, 0, size, size);
+    ctx.drawImage(img, 0, 0, size, size);
+    canvas.toBlob(pngBlob => {
+      const pngUrl = URL.createObjectURL(pngBlob);
+      const a = document.createElement('a');
+      a.href = pngUrl;
+      a.download = `icon${size}.png`;
+      a.textContent = `Download icon${size}.png (${size}x${size})`;
+      linksDiv.appendChild(a);
+    }, 'image/png');
+  });
+};
+
+img.src = url;
+</script>
+</body>
+</html>

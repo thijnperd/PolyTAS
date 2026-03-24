@@ -1,0 +1,14 @@
+{
+  "name": "polytas-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main/main.js",
+  "description": "PolyTAS desktop app (Electron)",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^32.0.0"
+  }
+}

@@ -1,0 +1,21 @@
+
+AGENTS.md
+
+# OS / editor
+.DS_Store
+.vscode/
+
+# Node / Electron (desktop app)
+/desktop/node_modules/
+/desktop/dist/
+/desktop/out/
+/desktop/.cache/
+/desktop/.vite/
+/desktop/.env
+/desktop/.env.*
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
