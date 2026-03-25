@@ -74,14 +74,36 @@ This avoids the "stuck on restarting" failure mode when the game does not progre
 
 Renderer listens for `REPLAY_STATUS` and `REPLAY_DONE` from game preload and updates the Game Preview status line.
 
-Typical states:
+### Backend script states (`REPLAY_STATUS.state`)
 
-- `Replay command sent. Waiting for game frames...`
-- `Replay restarting the run...`
-- `No game-frame hook detected. Using timer-based replay fallback...`
-- `Replay advancing: fX/Y (...)`
-- `Replay complete.`
-- `Replay stopped.`
+| State | Emitted by | Meaning |
+|---|---|---|
+| `waiting` | `game-preload.js` | Replay is armed and waiting for start key (`Space`/`Enter`) |
+| `restarting` | `game-preload.js` | Replay run reset has started (`r` press/release) |
+| `fallback` | `game-preload.js` | Game-frame hook did not advance, switched to timer stepping |
+| `running` | `game-preload.js` | Replay frames are advancing |
+| `stopped` | `game-preload.js` | Replay was explicitly stopped |
+
+`REPLAY_DONE` is emitted separately when replay reaches the end of input frames.
+
+### Full UI replay status texts
+
+All current replay status texts used by the renderer:
+
+| UI state (`data-state`) | Text shown |
+|---|---|
+| `idle` | `Replay idle.` |
+| `idle` | `Replay unavailable.` |
+| `idle` | `Replay command sent. Waiting for game frames...` |
+| `idle` | `Replay armed. Press Space or Enter in the game to begin.` |
+| `idle` | `Replay restarting the run...` |
+| `running` | `No game-frame hook detected. Using timer-based replay fallback...` |
+| `running` | `Replay advancing: fX/Y (...)` |
+| `done` | `Replay complete.` |
+| `stopped` | `Replay stopped.` |
+| `stopped` | `Replay blocked while recording is active.` |
+| `stopped` | `Replay unavailable until a game URL is set.` |
+| `stopped` | `Replay failed: no frame data available.` |
 
 Status UI nodes:
 
