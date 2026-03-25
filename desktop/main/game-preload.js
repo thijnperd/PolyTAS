@@ -9,8 +9,14 @@ if (!window.__polytasCaptureInstalled) {
   let replayInputs = null; // Uint8Array
   let replayFrame = 0;
   let replayStopped = false;
+  let replayMode = null;
   let fastFwdTarget = -1;
   let waitingForStart = false;
+  let replayLastReportedFrame = -1;
+  let replayDriver = 'game';
+  let replayFallbackCheckTimer = null;
+  let replayFallbackTimer = null;
+  let replayFrameDurationMs = 1000 / 60;
   const _origRAF = window.requestAnimationFrame.bind(window);
 
   window.requestAnimationFrame = function (cb) {
@@ -19,15 +25,8 @@ if (!window.__polytasCaptureInstalled) {
 
       ipcRenderer.send('polytas:from-game', { type: 'GAME_TICK', frame: gameFrame, ts });
 
-      if (replayActive && !replayStopped) {
-        if (replayFrame < replayInputs.length) {
-          _applyBitmask(replayInputs[replayFrame]);
-          replayFrame++;
-        } else {
-          _applyBitmask(0);
-          replayActive = false;
-          ipcRenderer.send('polytas:from-game', { type: 'REPLAY_DONE', frame: gameFrame });
-        }
+      if (replayActive && !replayStopped && replayDriver !== 'fallback') {
+        _advanceReplayFrame();
       }
 
       if (fastFwdTarget > 0 && gameFrame < fastFwdTarget) {
@@ -37,7 +36,11 @@ if (!window.__polytasCaptureInstalled) {
       }
       if (gameFrame === fastFwdTarget) {
         fastFwdTarget = -1;
-        ipcRenderer.send('polytas:from-game', { type: 'FAST_FORWARD_DONE', frame: gameFrame });
+        ipcRenderer.send('polytas:from-game', {
+          type: 'FAST_FORWARD_DONE',
+          frame: gameFrame,
+          mode: 'preview',
+        });
       }
 
       cb(ts);
@@ -45,7 +48,7 @@ if (!window.__polytasCaptureInstalled) {
   };
 
   function sendKey(type, e) {
-    if (!captureEnabled) return;
+    if (!captureEnabled || !e?.isTrusted) return;
     ipcRenderer.send('polytas:from-game', {
       type,
       key: e.key,
@@ -65,6 +68,8 @@ if (!window.__polytasCaptureInstalled) {
     if (waitingForStart && START_KEYS.has(e.key || e.code)) {
       waitingForStart = false;
       replayActive = true;
+      _emitReplayStatus('restarting', replayFrame);
+      _scheduleReplayFallbackCheck();
       _restartGame();
     }
     sendKey('KEY_DOWN', e);
@@ -81,20 +86,34 @@ if (!window.__polytasCaptureInstalled) {
 
       case 'REPLAY_INJECT': {
         const arr = _decodedRLE(msg.rle, msg.totalFrames);
+        _applyBitmask(0);
         replayInputs = arr;
         replayFrame = msg.startFrame || 0;
         replayStopped = false;
+        replayMode = 'replay';
+        replayLastReportedFrame = -1;
+        replayDriver = 'game';
+        replayFrameDurationMs = 1000 / Math.max(1, msg.fps || 60);
+        fastFwdTarget = -1;
         waitingForStart = !!msg.waitForSpace;
         replayActive = !waitingForStart;
+        _emitReplayStatus(waitingForStart ? 'waiting' : 'restarting', replayFrame);
+        _scheduleReplayFallbackCheck();
         if (!waitingForStart) _restartGame();
         break;
       }
 
       case 'PREVIEW': {
         const arr = _decodedRLE(msg.rle, msg.totalFrames);
+        _applyBitmask(0);
         replayInputs = arr;
         replayFrame = 0;
         replayStopped = false;
+        replayMode = 'preview';
+        replayLastReportedFrame = -1;
+        replayDriver = 'game';
+        replayFrameDurationMs = 1000 / Math.max(1, msg.fps || 60);
+        waitingForStart = false;
         replayActive = true;
         fastFwdTarget = typeof msg.targetFrame === 'number' ? msg.targetFrame : -1;
         _restartGame();
@@ -105,6 +124,14 @@ if (!window.__polytasCaptureInstalled) {
         _applyBitmask(0);
         replayStopped = true;
         replayActive = false;
+        replayInputs = null;
+        replayFrame = 0;
+        if (replayMode === 'replay') _emitReplayStatus('stopped', 0);
+        replayMode = null;
+        replayLastReportedFrame = -1;
+        replayDriver = 'game';
+        _clearReplayFallbackCheck();
+        fastFwdTarget = -1;
         waitingForStart = false;
         break;
 
@@ -113,6 +140,10 @@ if (!window.__polytasCaptureInstalled) {
         if (msg.inputs) {
           replayInputs = _decodedRLE(msg.inputs, msg.targetFrame + 1);
           replayFrame = 0;
+          replayMode = 'preview';
+          replayLastReportedFrame = -1;
+          replayDriver = 'game';
+          replayFrameDurationMs = 1000 / Math.max(1, msg.fps || 60);
           replayActive = true;
         }
         break;
@@ -155,9 +186,11 @@ if (!window.__polytasCaptureInstalled) {
   }
 
   function _dispatchKey(key, code, type) {
-    // Dispatch only to document to avoid triple-firing (document already bubbles
-    // through window). activeElement gets it via bubble.
-    document.dispatchEvent(new KeyboardEvent(type, {
+    const active = document.activeElement;
+    const target = active && active !== document.body && active !== document.documentElement
+      ? active
+      : document;
+    target.dispatchEvent(new KeyboardEvent(type, {
       key,
       code,
       bubbles: true,
@@ -179,6 +212,77 @@ if (!window.__polytasCaptureInstalled) {
     gameFrame = 0;
     _dispatchKey('r', 'KeyR', 'keydown');
     setTimeout(() => _dispatchKey('r', 'KeyR', 'keyup'), 120);
+  }
+
+  function _emitReplayStatus(state, frame) {
+    if (replayMode !== 'replay') return;
+    ipcRenderer.send('polytas:from-game', {
+      type: 'REPLAY_STATUS',
+      mode: replayMode,
+      state,
+      frame,
+      totalFrames: replayInputs ? replayInputs.length : 0,
+      gameFrame,
+    });
+  }
+
+  function _maybeReportReplayProgress() {
+    if (replayMode !== 'replay') return;
+    if (replayFrame === replayLastReportedFrame) return;
+    if (replayFrame !== 1 && replayFrame !== replayInputs.length && replayFrame % 30 !== 0) return;
+    replayLastReportedFrame = replayFrame;
+    _emitReplayStatus('running', replayFrame);
+  }
+
+  function _advanceReplayFrame() {
+    if (!replayActive || replayStopped || !replayInputs) return;
+    if (replayFrame < replayInputs.length) {
+      _applyBitmask(replayInputs[replayFrame]);
+      replayFrame++;
+      _maybeReportReplayProgress();
+      return;
+    }
+    _applyBitmask(0);
+    replayActive = false;
+    _clearReplayFallbackCheck();
+    ipcRenderer.send('polytas:from-game', {
+      type: 'REPLAY_DONE',
+      frame: gameFrame,
+      mode: replayMode || 'replay',
+    });
+    replayMode = null;
+    replayDriver = 'game';
+  }
+
+  function _clearReplayFallbackCheck() {
+    if (replayFallbackCheckTimer) clearTimeout(replayFallbackCheckTimer);
+    replayFallbackCheckTimer = null;
+    if (replayFallbackTimer) clearTimeout(replayFallbackTimer);
+    replayFallbackTimer = null;
+  }
+
+  function _scheduleReplayFallbackCheck() {
+    _clearReplayFallbackCheck();
+    if (replayMode !== 'replay') return;
+    replayFallbackCheckTimer = setTimeout(() => {
+      replayFallbackCheckTimer = null;
+      if (replayMode !== 'replay' || !replayActive || replayStopped) return;
+      if (replayFrame > 0) return;
+      replayDriver = 'fallback';
+      _emitReplayStatus('fallback', replayFrame);
+      _scheduleReplayFallbackLoop();
+    }, 1000);
+  }
+
+  function _scheduleReplayFallbackLoop() {
+    if (replayDriver !== 'fallback' || !replayActive || replayStopped) return;
+    if (replayFallbackTimer) clearTimeout(replayFallbackTimer);
+    replayFallbackTimer = setTimeout(() => {
+      replayFallbackTimer = null;
+      if (replayDriver !== 'fallback' || !replayActive || replayStopped) return;
+      _advanceReplayFrame();
+      _scheduleReplayFallbackLoop();
+    }, Math.max(4, replayFrameDurationMs));
   }
 
   function _readGameState() {

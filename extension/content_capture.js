@@ -62,7 +62,7 @@ if (!window.__polytasCaptureInstalled) {
 
   // ── Key capture ────────────────────────────────────────────────────────────
   function sendKey(type, e) {
-    if (!captureEnabled) return;
+    if (!captureEnabled || !e?.isTrusted) return;
     chrome.runtime.sendMessage({
       type,
       key:      e.key,

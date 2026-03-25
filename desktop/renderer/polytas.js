@@ -31,6 +31,7 @@ let recordInterval = null;
 
 // OS replay state (tracked in renderer so we can block live preview during it)
 let osReplayRunning = false;
+let injectedReplayRunning = false;
 
 // Splice
 let spliceKeys = new Set();
@@ -148,15 +149,43 @@ function handleExtensionMessage(msg) {
       setAttachState('attached');
       showToast(isDesktopApp ? 'Connected to game view.' : 'Attached to game tab.');
       setGameStatus('Game connected.');
+      setReplayStatus('idle', 'Replay idle.');
       setGamePlaceholderVisible(false);
     } else {
       setAttachState('detached');
+      injectedReplayRunning = false;
+      osReplayRunning = false;
       showToast(msg.error || 'Attach failed.');
       setGameStatus(msg.error || 'Game not connected.');
+      setReplayStatus('idle', 'Replay unavailable.');
       setGamePlaceholderVisible(true);
     }
   }
-  if (msg.type === 'REPLAY_DONE') setGameStatus('Preview complete.');
+  if (msg.type === 'REPLAY_STATUS' && msg.mode === 'replay') {
+    injectedReplayRunning = msg.state !== 'stopped';
+    if (msg.state === 'waiting') {
+      setReplayStatus('idle', 'Replay armed. Press Space or Enter in the game to begin.');
+    } else if (msg.state === 'restarting') {
+      setReplayStatus('idle', 'Replay restarting the run...');
+    } else if (msg.state === 'fallback') {
+      setReplayStatus('running', 'No game-frame hook detected. Using timer-based replay fallback...');
+    } else if (msg.state === 'running') {
+      const total = Math.max(0, msg.totalFrames || 0);
+      const frame = Math.max(0, Math.min(msg.frame || 0, total));
+      const pct = total ? ((frame / total) * 100).toFixed(1) : '0.0';
+      setReplayStatus('running', `Replay advancing: f${frame}/${total} (${pct}%)`);
+    }
+  }
+  if (msg.type === 'REPLAY_DONE') {
+    if (msg.mode === 'replay') {
+      injectedReplayRunning = false;
+      setGameStatus('Replay complete.');
+      setReplayStatus('done', 'Replay complete.');
+      showToast('Replay complete.');
+    } else {
+      setGameStatus('Preview complete.');
+    }
+  }
   if (msg.type === 'FAST_FORWARD_DONE') setGameStatus('Preview ready.');
 }
 
@@ -199,6 +228,13 @@ function initDesktopBridge() {
 function setGameStatus(text) {
   const el = document.getElementById('gameStatus');
   if (el) el.textContent = text;
+}
+
+function setReplayStatus(state, text) {
+  const el = document.getElementById('replayStatus');
+  if (!el) return;
+  el.dataset.state = state || 'idle';
+  el.textContent = text || 'Replay idle.';
 }
 
 function setGamePlaceholderVisible(visible) {
@@ -251,6 +287,7 @@ function updateGameUrlUI() {
 function initGamePanel() {
   if (!isDesktopApp || !window.PolyTASDesktop) return;
   document.body.classList.add('desktop-app');
+  setReplayStatus('idle', 'Replay idle.');
 
   const notice = document.querySelector('.notice');
   if (notice) {
@@ -296,8 +333,10 @@ function initGamePanel() {
     livePreviewEnabled = !livePreviewEnabled;
     liveBtn.textContent = 'LIVE PREVIEW: ' + (livePreviewEnabled ? 'ON' : 'OFF');
     if (!livePreviewEnabled) {
+      injectedReplayRunning = false;
       window.PolyTASDesktop.sendMessage({ type: 'REPLAY_STOP' });
       setGameStatus('Live preview paused.');
+      setReplayStatus('idle', 'Replay idle.');
     } else {
       scheduleLivePreview(previewTargetFrame);
     }
@@ -315,6 +354,7 @@ function initGamePanel() {
     updateGameUrlUI();
     if (gameUrl) {
       setGameStatus('Loading game...');
+      setReplayStatus('idle', 'Replay idle.');
       setGamePlaceholderVisible(false);
       scheduleGameBoundsUpdate();
       window.PolyTASDesktop.sendMessage({ type: 'ATTACH_GAME' });
@@ -325,9 +365,9 @@ function initGamePanel() {
 function scheduleLivePreview(frame) {
   if (!isDesktopApp || !window.PolyTASDesktop) return;
   if (!gameUrl) return;
-  // Don't trigger a game restart via PREVIEW while an OS replay is actively
-  // driving the game with physical key presses — this would cause stuck keys.
-  if (!livePreviewEnabled || isRecording || osReplayRunning) return;
+  // Don't trigger a game restart via PREVIEW while a replay is already driving
+  // inputs, otherwise edits can clobber the active run mid-stream.
+  if (!livePreviewEnabled || isRecording || osReplayRunning || injectedReplayRunning) return;
   if (typeof frame === 'number') previewTargetFrame = Math.max(0, Math.min(frame, totalFrames - 1));
   if (previewTimer) clearTimeout(previewTimer);
   previewTimer = setTimeout(runLivePreview, 160);
@@ -336,6 +376,7 @@ function scheduleLivePreview(frame) {
 function runLivePreview() {
   if (!isDesktopApp || !window.PolyTASDesktop) return;
   if (!gameUrl) return;
+  if (osReplayRunning || injectedReplayRunning) return;
   const arr = buildFrameArray();
   const rle = rleEncode(arr);
   window.PolyTASDesktop.sendMessage({
@@ -363,14 +404,14 @@ function handleKeyDown(e) {
     toggleRecording();
     return;
   }
-  if (isRecording) {
+  if (isRecording && !injectedReplayRunning && !osReplayRunning) {
     const bit = KEY_TO_BIT[e.key];
     if (bit) recordHeldKeys |= bit;
   }
 }
 
 function handleKeyUp(e) {
-  if (isRecording) {
+  if (isRecording && !injectedReplayRunning && !osReplayRunning) {
     const bit = KEY_TO_BIT[e.key];
     if (bit) recordHeldKeys &= ~bit;
   }
@@ -929,14 +970,19 @@ function handleFileImport(e) {
 }
 
 // ================================================================
-// REPLAY (NATIVE INPUTS)
+// REPLAY
 // ================================================================
 function runReplay() {
   if (!segments.length) { alert('Add at least one segment first.'); return; }
+  if (isRecording) {
+    showToast('Stop recording before replaying.');
+    setReplayStatus('stopped', 'Replay blocked while recording is active.');
+    return;
+  }
   const arr = buildFrameArray();
   const rle = rleEncode(arr);
   if (isDesktopApp && window.PolyTASDesktop) {
-    runNativeReplay(rle, arr.length);
+    runInjectedReplay(rle, arr.length);
     return;
   }
   alert('Replay requires the desktop app.');
@@ -1005,53 +1051,59 @@ function fallbackCopy(text) {
   }
 }
 
-function runNativeReplay(rle, total) {
+async function runInjectedReplay(rle, total) {
   if (!isDesktopApp || !window.PolyTASDesktop) return;
   if (!gameUrl) {
     showToast('Set a game URL first.');
+    setReplayStatus('stopped', 'Replay unavailable until a game URL is set.');
     return;
   }
   if (!Array.isArray(rle)) {
     showToast('No replay data available.');
+    setReplayStatus('stopped', 'Replay failed: no frame data available.');
     return;
   }
-  osReplayRunning = true;
-  setGameStatus('Starting replay in 5 seconds...');
-  window.PolyTASDesktop.startOsReplay({
+  if (previewTimer) {
+    clearTimeout(previewTimer);
+    previewTimer = null;
+  }
+  try {
+    await window.PolyTASDesktop.stopOsReplay();
+  } catch {
+    // Best-effort cleanup in case a previous nut-js replay was still running.
+  }
+  osReplayRunning = false;
+  injectedReplayRunning = true;
+  window.PolyTASDesktop.sendMessage({ type: 'REPLAY_STOP' });
+  window.PolyTASDesktop.sendMessage({
+    type: 'REPLAY_INJECT',
     rle,
     totalFrames: total || totalFrames,
     fps,
-    delayMs: 5000,
-  })
-    .then(ok => {
-      if (ok) {
-        closeModal();
-        showToast('Replay scheduled (5s delay).');
-      } else {
-        osReplayRunning = false;
-        setGameStatus('OS replay failed.');
-        showToast('OS replay failed.');
-      }
-    })
-    .catch(() => {
-      osReplayRunning = false;
-      setGameStatus('OS replay failed.');
-      showToast('OS replay failed.');
-    });
+  });
+  closeModal();
+  setGameStatus('Running frame-locked replay...');
+  setReplayStatus('idle', 'Replay command sent. Waiting for game frames...');
+  showToast('Replay started.');
 }
 
 function stopReplay() {
   if (!isDesktopApp || !window.PolyTASDesktop) return;
+  injectedReplayRunning = false;
   window.PolyTASDesktop.stopOsReplay()
     .then(() => {
       osReplayRunning = false;
+      window.PolyTASDesktop.sendMessage({ type: 'REPLAY_STOP' });
       setGameStatus('Replay stopped.');
+      setReplayStatus('stopped', 'Replay stopped.');
       showToast('Replay stopped.');
     })
     .catch(() => {
       osReplayRunning = false;
-      setGameStatus('Replay stop failed.');
-      showToast('Replay stop failed.');
+      window.PolyTASDesktop.sendMessage({ type: 'REPLAY_STOP' });
+      setGameStatus('Replay stopped.');
+      setReplayStatus('stopped', 'Replay stopped.');
+      showToast('Replay stopped.');
     });
 }
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
@@ -1081,7 +1133,7 @@ function showHelp() {
     '<strong>FRAME EDITOR tab</strong> &mdash; Scrollable grid where each row is one frame and each column is a key. Click or drag cells to toggle individual key presses.<br><br>' +
     '<strong>&#9986; SPLICE</strong> &mdash; Replace any frame range with a specific set of keys, or erase it entirely.<br><br>' +
     '<strong>Timeline</strong> &mdash; Click = set start frame, Shift+click = set end.<br><br>' +
-    '<strong>&#9654; RUN REPLAY</strong> &mdash; Replays the inputs directly in the embedded game.',
+    '<strong>&#9654; RUN REPLAY</strong> &mdash; Replays the inputs frame-accurately inside the embedded game.',
     '',
     [{ label: 'GOT IT', cls: 'btn-accent', action: closeModal }]
   );

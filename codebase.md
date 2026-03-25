@@ -1,8 +1,10 @@
-# PolyTAS Desktop — Codebase Reference
+# PolyTAS Desktop - Codebase Reference
 
 ## Overview
 
-The desktop build is an Electron application that wraps the PolyTAS editor UI and embeds the PolyTrack game in the same window. It provides two replay modes: a **script-based in-page replay** that injects synthetic key events directly into the game's JavaScript runtime, and an **OS-level replay** that drives the system keyboard via `@nut-tree-fork/nut-js` so inputs look physical to the game engine.
+PolyTAS Desktop is an Electron app that embeds the PolyTrack game and drives replay by injecting keyboard events from inside the game view. Replay is frame-locked to game updates when possible, with an automatic timer fallback when the game-frame hook does not advance.
+
+The current UI replay path is script/injected replay (`REPLAY_INJECT`), not OS keyboard automation.
 
 ---
 
@@ -11,229 +13,164 @@ The desktop build is an Electron application that wraps the PolyTAS editor UI an
 ```
 desktop/
 ├── main/
-│   ├── main.js          — Electron main process: window, BrowserView, IPC, nut-js
-│   ├── preload.js       — Context bridge exposing PolyTASDesktop API to renderer
-│   └── game-preload.js  — Injected into the game BrowserView; patches rAF and key capture
+│   ├── main.js          - Electron main process: window, BrowserView, IPC bridge
+│   ├── preload.js       - Context bridge exposing PolyTASDesktop API to renderer
+│   └── game-preload.js  - Injected into game BrowserView; capture + replay runtime
 ├── renderer/
-│   ├── index.html       — Editor shell
-│   ├── polytas.js       — Editor UI logic (segments, recording, timeline, replay)
-│   └── styles.css       — Editor styles
+│   ├── index.html       - Editor shell + game panel UI
+│   ├── polytas.js       - Editor logic, recording, replay commands, status handling
+│   └── styles.css       - Editor styles
 └── package.json
 ```
+
+Legacy extension code is kept under `extension/` for reference and older workflows.
 
 ---
 
 ## Process Architecture
 
-Electron separates code into a **main process** (Node.js) and one or more **renderer processes** (browser contexts). PolyTAS uses three distinct browser contexts:
+PolyTAS Desktop uses three runtime contexts:
 
-| Context | File | Sandbox |
+| Context | File | Purpose |
 |---|---|---|
-| Main process | `main/main.js` | Full Node.js |
-| Editor renderer | `renderer/index.html` + `polytas.js` | Sandboxed, context-isolated |
-| Game BrowserView | external URL | Sandboxed, context-isolated off |
+| Main process | `desktop/main/main.js` | Creates window + BrowserView, routes IPC |
+| Editor renderer | `desktop/renderer/index.html` + `polytas.js` | UI, timeline/editor, replay commands |
+| Game BrowserView | external game URL + `game-preload.js` | Key capture, replay injection, frame hooks |
 
-The editor renderer cannot call Node APIs directly. It communicates with the main process exclusively through the context bridge defined in `preload.js`. The game view gets its own preload (`game-preload.js`) which has access to `ipcRenderer` so it can relay events back and forth.
-
----
-
-## Game Integration
-
-### BrowserView
-
-The game runs inside a `BrowserView` — a Chromium view that the main process attaches to the main `BrowserWindow`. It sits at a pixel-aligned bounding rect that the editor renderer calculates and sends over IPC whenever the window resizes.
-
-```js
-// main.js — creating the game view
-gameView = new BrowserView({
-  webPreferences: {
-    preload: path.join(__dirname, 'game-preload.js'),
-    contextIsolation: false,  // game-preload needs direct ipcRenderer access
-    sandbox: true,
-    backgroundThrottling: false,
-  },
-});
-mainWindow.setBrowserView(gameView);
-```
-
-`backgroundThrottling` is disabled on both the main window and the game view because Electron throttles `requestAnimationFrame` and timer callbacks in background tabs — that would silently break frame-accurate timing.
-
-The bounds are kept in sync by the renderer sending `polytas:set-game-bounds` messages whenever the game viewport element's layout changes, using a `ResizeObserver` and a 50 ms debounce timer.
-
-### game-preload.js
-
-This script is injected into the game BrowserView before any game code runs. It installs a thin shim on `window.requestAnimationFrame` and a pair of `keydown`/`keyup` listeners on `window`, then opens a port back to the main process via `ipcRenderer`.
-
-Everything it does has to survive next to whatever the game itself does to the DOM — which is why it guards against double-installation with `window.__polytasCaptureInstalled`.
+The renderer does not call Node APIs directly. It only talks through `window.PolyTASDesktop` from `desktop/main/preload.js`.
 
 ---
 
-## Key Capture (Recording)
+## Replay Model
 
-When the user clicks **CONNECT GAME** in the editor, the renderer sends an `ATTACH_GAME` IPC message. The main process forwards a `SET_CAPTURE` message into the game view, which tells the game-preload to enable its key listeners.
+### Input representation
 
-Two parallel capture paths exist:
+Replay data is a per-frame bitmask stream:
 
-**Path 1 — game view key capture (`game-preload.js`):**
+- `up=1`
+- `down=2`
+- `left=4`
+- `right=8`
 
-```js
-window.addEventListener('keydown', e => {
-  if (!captureEnabled) return;
-  ipcRenderer.send('polytas:from-game', { type: 'KEY_DOWN', key: e.key, code: e.code, ... });
-}, true);
-window.addEventListener('keyup', e => sendKey('KEY_UP', e), true);
-```
+The editor builds a `Uint8Array(totalFrames)` from segments, then RLE-compresses it (`[[value,count], ...]`) before sending to the game preload.
 
-The listener is registered with `capture: true` (third argument) so it fires before the game can swallow the event. The event data is serialised and sent to the main process, which relays it to the editor renderer as a `polytas:game-event` IPC message.
+### Script replay (`REPLAY_INJECT`)
 
-**Path 2 — `before-input-event` on the game view (`main.js`):**
+1. Renderer sends `REPLAY_INJECT` with `rle`, `totalFrames`, and `fps`.
+2. `game-preload.js` decodes RLE into `replayInputs`.
+3. Replay starts by issuing synthetic `r` key restart.
+4. On each step, preload diffs current and next bitmask and dispatches only changed key transitions (`keydown`/`keyup`).
+5. On completion or stop, preload releases all keys by applying bitmask `0`.
 
-```js
-gameView.webContents.on('before-input-event', (_event, input) => {
-  if (input.type !== 'keyDown' && input.type !== 'keyUp') return;
-  sendToRenderer({ type: input.type === 'keyDown' ? 'KEY_DOWN' : 'KEY_UP', key: input.key, ... });
-});
-```
+### Primary stepping and fallback
 
-This fires at the Chromium level before the event even enters the renderer. It acts as a fallback for key events that happen when the game view is focused but the preload's listener might not yet have run.
+`game-preload.js` first tries to step replay from the patched `window.requestAnimationFrame` path. If replay frame `0` still has not advanced after 1 second, it emits replay status `fallback` and switches to timer stepping at the requested TAS FPS.
 
-In the editor renderer, `handleKeyDown` and `handleKeyUp` receive those events and update `recordHeldKeys` (a bitmask). A drift-compensating `setTimeout` loop samples `recordHeldKeys` once per frame at `1000 / fps` ms intervals, accumulating the raw bitmask into `recordedFrames[]`. When recording stops, `rleToSegments` compresses consecutive identical bitmasks into segments.
+This avoids the "stuck on restarting" failure mode when the game does not progress through the expected frame hook.
 
 ---
 
-## Key Replay
+## Replay Status in UI
 
-There are two fundamentally different replay strategies, chosen depending on whether the user runs the native OS replay or the in-page script replay.
+Renderer listens for `REPLAY_STATUS` and `REPLAY_DONE` from game preload and updates the Game Preview status line.
 
-### In-page Replay (via game-preload)
+Typical states:
 
-When the editor sends a `PREVIEW` or `REPLAY_INJECT` message, `game-preload.js` decodes the RLE payload into a `Uint8Array`, stores it in `replayInputs`, and sets `replayActive = true`. The rAF shim then fires on every animation frame:
+- `Replay command sent. Waiting for game frames...`
+- `Replay restarting the run...`
+- `No game-frame hook detected. Using timer-based replay fallback...`
+- `Replay advancing: fX/Y (...)`
+- `Replay complete.`
+- `Replay stopped.`
 
-```js
-window.requestAnimationFrame = function (cb) {
-  return _origRAF(function (ts) {
-    gameFrame++;
+Status UI nodes:
 
-    if (replayActive && replayFrame < replayInputs.length) {
-      _applyBitmask(replayInputs[replayFrame]);
-      replayFrame++;
-    }
-
-    cb(ts);  // original game callback runs after inputs are applied
-  });
-};
-```
-
-`_applyBitmask` diffs the currently held bitmask against the new one, dispatches `keydown`/`keyup` `KeyboardEvent`s to `document` for every changed bit, and updates `_curBits`. Both Arrow keys and WASD equivalents are dispatched simultaneously for each direction so the game accepts whichever mapping it uses.
-
-```js
-const KM = {
-  up:    [{ key: 'ArrowUp', code: 'ArrowUp' }, { key: 'w', code: 'KeyW' }],
-  // ...
-};
-
-function _dispatchKey(key, code, type) {
-  document.dispatchEvent(new KeyboardEvent(type, { key, code, bubbles: true, cancelable: true }));
-}
-```
-
-Before the first replay frame, `_restartGame` dispatches a synthetic `r`/`KeyR` keydown+keyup to reset the run. Because this replay lives inside the game's own JS thread and fires synchronously before the game's rAF callback, timing is exact to the frame — no OS scheduler jitter.
-
-### OS-level Replay (via nut-js)
-
-For the **RUN REPLAY** button, the renderer calls `window.PolyTASDesktop.startOsReplay(payload)`, which goes over IPC to `main.js`. This path exists because injecting keys via the game preload can interfere with live-preview restarts, and it provides a mode that behaves identically to a human playing.
-
-`ensureNut()` dynamically imports `@nut-tree-fork/nut-js` the first time it's needed (lazy import because nut-js has native binaries and takes a moment to load). It sets `keyboard.config.autoDelayMs = 0` to eliminate nut's built-in inter-key delay.
-
-The replay is driven by a drift-compensating `setTimeout` scheduler — the same technique used in recording:
-
-```js
-function scheduleOsReplayTick(frameDuration, replayStartTime) {
-  const expectedTime = replayStartTime + osReplayFrame * frameDuration;
-  const delay = Math.max(0, expectedTime - Date.now());
-
-  osReplayTimer = setTimeout(() => {
-    const nb = osReplayInputs[osReplayFrame];
-    osReplayTickInFlight = applyBitmaskOs(nb);
-    osReplayTickInFlight.then(() => {
-      osReplayFrame++;
-      if (osReplayFrame < osReplayInputs.length) {
-        scheduleOsReplayTick(frameDuration, replayStartTime);
-      } else {
-        stopOsReplay();
-      }
-    });
-  }, delay);
-}
-```
-
-`applyBitmaskOs` translates bitmask changes into `nutKeyboard.pressKey` / `nutKeyboard.releaseKey` calls. All changed keys for a single frame are fired in parallel via `Promise.all` to avoid compounding latency across multiple simultaneous key changes:
-
-```js
-async function applyBitmaskOs(nb) {
-  const changed = osReplayBits ^ nb;
-  const ops = [];
-  for (const item of BIT_KEYS) {
-    if (!(changed & item.bit)) continue;
-    const key = nutKey[KEY_MAP[item.name]];
-    ops.push(nb & item.bit ? nutKeyboard.pressKey(key) : nutKeyboard.releaseKey(key));
-  }
-  await Promise.all(ops);
-  osReplayBits = nb;
-}
-```
-
-Before the first frame, `beginOsReplay` taps the `R` key (physical press via nut-js) and waits 700 ms for the game to reset, then records `replayStartTime = Date.now()` as the anchor for all subsequent drift compensation.
-
-Stopping is careful about race conditions: `stopOsReplay` waits for any in-flight tick promise (`osReplayTickInFlight`) to resolve before calling `releaseAllOsKeys`, preventing the stuck-key scenario where a `pressKey` is mid-await when the release happens.
+- `#gameStatus` (general game state)
+- `#replayStatus` (replay-specific state)
 
 ---
 
-## IPC Channel Reference
+## Recording and Capture
+
+### Capture channels
+
+There are two key event paths from the game view:
+
+1. `game-preload.js` capture listeners (`keydown`/`keyup`, capture phase).
+2. Main process `before-input-event` fallback from BrowserView webContents.
+
+### Synthetic-event guard
+
+Replay-generated events are synthetic. Capture now filters with `event.isTrusted` before forwarding key events. This prevents replay from feeding back into recording and causing rerecord loops.
+
+---
+
+## Key Dispatch Strategy
+
+Replay dispatch target is:
+
+1. focused element (`document.activeElement`) when present and meaningful
+2. otherwise `document`
+
+This increases compatibility with games that read key events from focused elements instead of only global document listeners.
+
+---
+
+## IPC Channels
 
 | Channel | Direction | Description |
 |---|---|---|
-| `polytas:editor-message` | renderer → main | Editor commands (`ATTACH_GAME`, `PREVIEW`, `REPLAY_STOP`, etc.) |
-| `polytas:game-event` | main → renderer | Key events and status updates from the game view |
-| `polytas:from-game` | game-preload → main | Key events, `GAME_TICK`, `REPLAY_DONE`, etc. |
-| `polytas:to-game` | main → game-preload | Replay commands forwarded from the editor |
-| `polytas:set-game-bounds` | renderer → main | Pixel-aligned bounds for the BrowserView |
-| `polytas:get-game-url` (invoke) | renderer ↔ main | Read stored game URL |
-| `polytas:set-game-url` (invoke) | renderer ↔ main | Persist and load a new game URL |
-| `polytas:run-script` (invoke) | renderer ↔ main | Execute arbitrary JS in the game view |
-| `polytas:os-replay-start` (invoke) | renderer ↔ main | Start nut-js OS replay with RLE payload |
-| `polytas:os-replay-stop` (invoke) | renderer ↔ main | Stop OS replay and release all keys |
-| `polytas:copy-text` (invoke) | renderer ↔ main | Write text to system clipboard |
+| `polytas:editor-message` | renderer -> main | Commands such as `ATTACH_GAME`, `PREVIEW`, `REPLAY_INJECT`, `REPLAY_STOP` |
+| `polytas:game-event` | main -> renderer | Relayed game/capture/replay events |
+| `polytas:from-game` | game-preload -> main | `KEY_DOWN`, `KEY_UP`, `GAME_TICK`, `REPLAY_STATUS`, `REPLAY_DONE`, etc. |
+| `polytas:to-game` | main -> game-preload | Replay/control messages forwarded from renderer |
+| `polytas:set-game-bounds` | renderer -> main | BrowserView bounds updates |
+| `polytas:get-game-url` | renderer <-> main (invoke) | Read saved game URL |
+| `polytas:set-game-url` | renderer <-> main (invoke) | Save + load game URL |
+| `polytas:run-script` | renderer <-> main (invoke) | Execute JavaScript in game view |
+| `polytas:copy-text` | renderer <-> main (invoke) | Clipboard copy helper |
 
 ---
 
-## Key/Bitmask Mapping
+## Data Model
 
-All three contexts (main process, game-preload, and renderer) share the same bitmask convention:
-
-| Bit | Direction |
-|---|---|
-| 1 | Up |
-| 2 | Down |
-| 4 | Left |
-| 8 | Right |
-
-In `main.js` the mapping from logical name to nut-js `Key` enum is:
+Segments in renderer:
 
 ```js
-const KEY_MAP = { up: 'Up', down: 'Down', left: 'Left', right: 'Right' };
+{ id, start, end, keys, recorded? }
 ```
 
-In `game-preload.js` each direction maps to both Arrow and WASD variants so whichever the game listens to gets hit.
-
----
-
-## Config Persistence
-
-The game URL is saved to `config.json` in Electron's `userData` directory (`app.getPath('userData')`). On startup `loadConfig()` reads it; `saveConfig()` writes it whenever the user sets a new URL. The file is not committed to the repo.
+- `start` inclusive
+- `end` exclusive
+- `keys` is array of `up|down|left|right`
+- overlapping segments are OR-merged into frame bitmasks
 
 ---
 
 ## Live Preview
 
-When the user edits segments, `scheduleLivePreview(frame)` debounces 160 ms and then sends a `PREVIEW` message to the game view containing the full RLE-encoded frame array and a `targetFrame`. The game-preload handles this identically to a full replay but the frame counter is used to fast-forward to `targetFrame` while still applying all input history — giving the user a real-time preview of the game state at any point in the TAS without manually scrubbing. Live preview is suppressed while an OS replay is active to avoid conflicting `_restartGame` calls.
+Live preview is debounced (`160ms`) and sends `PREVIEW` with full RLE plus target frame. The preload replays from frame `0` and fast-forwards toward the target so state is derived from full input history.
+
+Live preview is blocked while recording or replay is active to avoid conflicting restarts.
+
+---
+
+## Config Persistence
+
+Game URL is stored in:
+
+- `path.join(app.getPath('userData'), 'config.json')`
+
+Loaded at startup and saved when the URL is updated in the UI.
+
+---
+
+## Debugging Checklist (Replay)
+
+If replay appears stuck:
+
+1. Confirm `#replayStatus` changes beyond `restarting`.
+2. If status enters fallback and frame counter advances, injection loop is alive and game input consumption is the next suspect.
+3. If status never enters fallback or running, verify preload injection happened in the active game view.
+4. Confirm recording is stopped before replay.
+5. Confirm game tab/view has focus and is not paused/background-throttled.

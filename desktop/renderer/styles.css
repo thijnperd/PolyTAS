@@ -395,6 +395,23 @@ body.pip-window .left-panel { border-right: none; }
   color: var(--dim);
 }
 
+.game-replay-status {
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.game-replay-status[data-state="running"] {
+  color: var(--accent);
+}
+
+.game-replay-status[data-state="done"] {
+  color: var(--up);
+}
+
+.game-replay-status[data-state="stopped"] {
+  color: var(--down);
+}
+
 .game-viewport {
   flex: 1;
   min-height: 240px;
