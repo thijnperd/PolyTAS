@@ -58,8 +58,11 @@ if (!window.__polytasCaptureInstalled) {
     });
   }
 
+  // Start keys: Space or Enter trigger a waiting replay intentionally.
+  const START_KEYS = new Set(['Space', 'Enter', ' ']);
+
   window.addEventListener('keydown', e => {
-    if (waitingForStart) {
+    if (waitingForStart && START_KEYS.has(e.key || e.code)) {
       waitingForStart = false;
       replayActive = true;
       _restartGame();
@@ -128,7 +131,14 @@ if (!window.__polytasCaptureInstalled) {
     ipcRenderer.send('polytas:from-game', { type: 'GAME_UNLOADED' });
   });
 
-  const KM = { up: ['ArrowUp', 'w'], down: ['ArrowDown', 's'], left: ['ArrowLeft', 'a'], right: ['ArrowRight', 'd'] };
+  // Map logical key name -> [key string, code string] pairs for KeyboardEvent.
+  // 'key' is the printable/logical value; 'code' is the physical key identifier.
+  const KM = {
+    up:    [{ key: 'ArrowUp',    code: 'ArrowUp'    }, { key: 'w', code: 'KeyW' }],
+    down:  [{ key: 'ArrowDown',  code: 'ArrowDown'  }, { key: 's', code: 'KeyS' }],
+    left:  [{ key: 'ArrowLeft',  code: 'ArrowLeft'  }, { key: 'a', code: 'KeyA' }],
+    right: [{ key: 'ArrowRight', code: 'ArrowRight' }, { key: 'd', code: 'KeyD' }],
+  };
   const BIT = { up: 1, down: 2, left: 4, right: 8 };
   let _curBits = 0;
 
@@ -138,22 +148,21 @@ if (!window.__polytasCaptureInstalled) {
     for (const [name, bit] of Object.entries(BIT)) {
       if (ch & bit) {
         const type = (nb & bit) ? 'keydown' : 'keyup';
-        KM[name].forEach(k => _dispatchKey(k, type));
+        KM[name].forEach(k => _dispatchKey(k.key, k.code, type));
       }
     }
     _curBits = nb;
   }
 
-  function _dispatchKey(key, type) {
-    const targets = [document, window, document.activeElement].filter(Boolean);
-    for (const target of targets) {
-      target.dispatchEvent(new KeyboardEvent(type, {
-        key,
-        code: key,
-        bubbles: true,
-        cancelable: true,
-      }));
-    }
+  function _dispatchKey(key, code, type) {
+    // Dispatch only to document to avoid triple-firing (document already bubbles
+    // through window). activeElement gets it via bubble.
+    document.dispatchEvent(new KeyboardEvent(type, {
+      key,
+      code,
+      bubbles: true,
+      cancelable: true,
+    }));
   }
 
   function _decodedRLE(rle, totalFrames) {
@@ -168,8 +177,8 @@ if (!window.__polytasCaptureInstalled) {
 
   function _restartGame() {
     gameFrame = 0;
-    _dispatchKey('r', 'keydown');
-    setTimeout(() => _dispatchKey('r', 'keyup'), 120);
+    _dispatchKey('r', 'KeyR', 'keydown');
+    setTimeout(() => _dispatchKey('r', 'KeyR', 'keyup'), 120);
   }
 
   function _readGameState() {

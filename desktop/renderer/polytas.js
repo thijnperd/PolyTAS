@@ -29,6 +29,9 @@ let recordHeldKeys = 0;
 let recordFrameCount = 0;
 let recordInterval = null;
 
+// OS replay state (tracked in renderer so we can block live preview during it)
+let osReplayRunning = false;
+
 // Splice
 let spliceKeys = new Set();
 
@@ -322,7 +325,9 @@ function initGamePanel() {
 function scheduleLivePreview(frame) {
   if (!isDesktopApp || !window.PolyTASDesktop) return;
   if (!gameUrl) return;
-  if (!livePreviewEnabled || isRecording) return;
+  // Don't trigger a game restart via PREVIEW while an OS replay is actively
+  // driving the game with physical key presses — this would cause stuck keys.
+  if (!livePreviewEnabled || isRecording || osReplayRunning) return;
   if (typeof frame === 'number') previewTargetFrame = Math.max(0, Math.min(frame, totalFrames - 1));
   if (previewTimer) clearTimeout(previewTimer);
   previewTimer = setTimeout(runLivePreview, 160);
@@ -388,12 +393,26 @@ function startRecording() {
   document.getElementById('recBtn').textContent = '\u23F9 STOP';
   document.getElementById('recOverlay').classList.add('active');
 
+  // Use drift-compensating scheduling instead of setInterval so recorded frame
+  // counts stay accurate even if JS execution delays individual samples.
   const frameDuration = 1000 / fps;
-  recordInterval = setInterval(() => {
-    recordedFrames.push(recordHeldKeys);
-    recordFrameCount++;
-    document.getElementById('recLabel').textContent = 'REC \u2022 ' + recordFrameCount + 'f';
-  }, frameDuration);
+  const recStartTime = Date.now();
+  let nextFrame = 0;
+
+  function scheduleRecordTick() {
+    if (!isRecording) return;
+    const expectedTime = recStartTime + nextFrame * frameDuration;
+    const delay = Math.max(0, expectedTime - Date.now());
+    recordInterval = setTimeout(() => {
+      if (!isRecording) return;
+      recordedFrames.push(recordHeldKeys);
+      recordFrameCount++;
+      nextFrame++;
+      document.getElementById('recLabel').textContent = 'REC \u2022 ' + recordFrameCount + 'f';
+      scheduleRecordTick();
+    }, delay);
+  }
+  scheduleRecordTick();
 
   showToast('Recording \u2014 Ctrl+Shift+. to stop');
 }
@@ -401,6 +420,8 @@ function startRecording() {
 function stopRecording() {
   if (!isRecording) return;
   isRecording = false;
+  // Works for both setTimeout (drift-compensated) and legacy setInterval.
+  clearTimeout(recordInterval);
   clearInterval(recordInterval);
   recordInterval = null;
 
@@ -994,6 +1015,7 @@ function runNativeReplay(rle, total) {
     showToast('No replay data available.');
     return;
   }
+  osReplayRunning = true;
   setGameStatus('Starting replay in 5 seconds...');
   window.PolyTASDesktop.startOsReplay({
     rle,
@@ -1006,11 +1028,13 @@ function runNativeReplay(rle, total) {
         closeModal();
         showToast('Replay scheduled (5s delay).');
       } else {
+        osReplayRunning = false;
         setGameStatus('OS replay failed.');
         showToast('OS replay failed.');
       }
     })
     .catch(() => {
+      osReplayRunning = false;
       setGameStatus('OS replay failed.');
       showToast('OS replay failed.');
     });
@@ -1020,10 +1044,12 @@ function stopReplay() {
   if (!isDesktopApp || !window.PolyTASDesktop) return;
   window.PolyTASDesktop.stopOsReplay()
     .then(() => {
+      osReplayRunning = false;
       setGameStatus('Replay stopped.');
       showToast('Replay stopped.');
     })
     .catch(() => {
+      osReplayRunning = false;
       setGameStatus('Replay stop failed.');
       showToast('Replay stop failed.');
     });

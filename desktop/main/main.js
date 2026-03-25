@@ -14,6 +14,8 @@ let osReplayFrame = 0;
 let osReplayTimer = null;
 let osReplayBits = 0;
 let osReplayDelayTimer = null;
+let osReplayStarting = false;       // mutex: true while startOsReplay is pending
+let osReplayTickInFlight = null;   // Promise of the currently-running tick, if any
 let nut = null;
 let nutKeyboard = null;
 let nutKey = null;
@@ -194,7 +196,8 @@ app.on('before-quit', () => {
     pendingScripts = [];
   }
   stopOsReplay();
-  forceCloseWindows();
+  // Force-close any remaining windows so the process doesn't hang.
+  BrowserWindow.getAllWindows().forEach(w => { try { w.destroy(); } catch {} });
   setTimeout(() => app.exit(0), 800);
 });
 
@@ -257,12 +260,17 @@ ipcMain.handle('polytas:copy-text', (_event, text) => {
 
 ipcMain.handle('polytas:os-replay-start', async (_event, payload) => {
   if (isQuitting) return false;
+  // Prevent double-start if the user clicks RUN REPLAY rapidly.
+  if (osReplayStarting) return false;
+  osReplayStarting = true;
   try {
     await startOsReplay(payload);
     return true;
   } catch (err) {
     console.warn('OS replay failed:', err);
     throw err;
+  } finally {
+    osReplayStarting = false;
   }
 });
 
@@ -342,45 +350,65 @@ function stopOsReplay() {
   osReplayTimer = null;
   if (osReplayDelayTimer) clearTimeout(osReplayDelayTimer);
   osReplayDelayTimer = null;
-  releaseAllOsKeys().catch(() => {});
+  // Wait for any in-flight tick to finish before releasing keys so we
+  // don't release while a pressKey() is still mid-await (causing stuck keys).
+  const tickDone = osReplayTickInFlight || Promise.resolve();
+  tickDone.catch(() => {}).then(() => releaseAllOsKeys().catch(() => {}));
 }
 
-function scheduleOsReplayTick(frameDuration) {
+function scheduleOsReplayTick(frameDuration, replayStartTime) {
   if (!osReplayActive) return;
-  osReplayTimer = setTimeout(async () => {
-    try {
-      const nb = osReplayInputs && osReplayFrame < osReplayInputs.length
-        ? osReplayInputs[osReplayFrame]
-        : 0;
-      await applyBitmaskOs(nb);
-      osReplayFrame++;
-      if (osReplayInputs && osReplayFrame < osReplayInputs.length) {
-        scheduleOsReplayTick(frameDuration);
-      } else {
+  // Calculate when this frame *should* fire relative to the replay start,
+  // compensating for any drift accumulated from previous frames.
+  const expectedTime = replayStartTime + osReplayFrame * frameDuration;
+  const delay = Math.max(0, expectedTime - Date.now());
+
+  osReplayTimer = setTimeout(() => {
+    if (!osReplayActive) return;
+    const nb = osReplayInputs && osReplayFrame < osReplayInputs.length
+      ? osReplayInputs[osReplayFrame]
+      : 0;
+    // Track the in-flight promise so stopOsReplay can wait for it before
+    // releasing keys — preventing the stuck-key race condition.
+    osReplayTickInFlight = applyBitmaskOs(nb);
+    osReplayTickInFlight
+      .then(() => {
+        osReplayTickInFlight = null;
+        if (!osReplayActive) return;
+        osReplayFrame++;
+        if (osReplayInputs && osReplayFrame < osReplayInputs.length) {
+          scheduleOsReplayTick(frameDuration, replayStartTime);
+        } else {
+          stopOsReplay();
+        }
+      })
+      .catch(err => {
+        osReplayTickInFlight = null;
+        console.warn('OS replay tick failed:', err);
         stopOsReplay();
-      }
-    } catch (err) {
-      console.warn('OS replay tick failed:', err);
-      stopOsReplay();
-    }
-  }, frameDuration);
+      });
+  }, delay);
 }
 
 async function applyBitmaskOs(nb) {
   if (!nutKeyboard || !nutKey) return;
   const changed = osReplayBits ^ nb;
   if (!changed) return;
+  // Press/release all changed keys in parallel so multiple key changes
+  // in a single frame don't accumulate latency sequentially.
+  const ops = [];
   for (const item of BIT_KEYS) {
     if (!(changed & item.bit)) continue;
     const keyName = KEY_MAP[item.name];
     const key = nutKey[keyName];
     if (!key) continue;
     if (nb & item.bit) {
-      await nutKeyboard.pressKey(key);
+      ops.push(nutKeyboard.pressKey(key));
     } else {
-      await nutKeyboard.releaseKey(key);
+      ops.push(nutKeyboard.releaseKey(key));
     }
   }
+  await Promise.all(ops);
   osReplayBits = nb;
 }
 
@@ -401,7 +429,10 @@ async function beginOsReplay(fps) {
     await tapKey(nutKey.R);
     await sleep(700);
   }
-  scheduleOsReplayTick(1000 / fps);
+  // Capture start time *after* the restart delay so drift compensation
+  // is anchored to when frame 0 is actually meant to fire.
+  const replayStartTime = Date.now();
+  scheduleOsReplayTick(1000 / fps, replayStartTime);
 }
 
 function executeScriptNow(script) {
