@@ -269,6 +269,7 @@ body.pip-window .left-panel { border-right: none; }
 .fg-table tbody tr:hover td { background: rgba(255,255,255,0.03); }
 .fg-table td {
   padding: 2px 4px; border-bottom: 1px solid rgba(255,255,255,0.03);
+  text-align: center; transition: background 0.05s; -webkit-user-select: none;
   text-align: center; transition: background 0.05s; user-select: none;
 }
 .fg-table td:first-child { text-align: right; padding-right: 8px; color: var(--dim); font-size: 10px; width: 60px; }
